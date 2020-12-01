@@ -1,3 +1,15 @@
+# ORB-SLAM3 超详细注释
+
+
+-by 计算机视觉life 公众号旗下开源学习小组：SLAM研习社
+
+
+关注公众号：计算机视觉life，第一时间获取SLAM、三维视觉干货
+
+![qrcode](https://github.com/electech6/ORBSLAM2_detailed_comments/blob/master/qrcode.jpg)
+
+----
+
 # ORB-SLAM3
 
 ### V0.3: Beta version, 4 Sep 2020
