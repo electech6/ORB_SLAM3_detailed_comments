@@ -103,13 +103,14 @@ public:
 public:
 
     // Tracking states
+    // 跟踪状态
     enum eTrackingState{
-        SYSTEM_NOT_READY=-1,
-        NO_IMAGES_YET=0,
-        NOT_INITIALIZED=1,
-        OK=2,
-        RECENTLY_LOST=3,
-        LOST=4,
+        SYSTEM_NOT_READY=-1,            //系统没有准备好的状态,一般就是在启动后加载配置文件和词典文件时候的状态
+        NO_IMAGES_YET=0,                //当前无图像
+        NOT_INITIALIZED=1,              //有图像但是没有完成初始化
+        OK=2,                           //正常跟踪状态
+        RECENTLY_LOST=3,                //IMU模式：当前地图中的KF>10,且丢失时间<5秒。纯视觉模式没有该状态
+        LOST=4,                         //IMU模式：当前帧跟丢超过5s。纯视觉模式：重定位失败
         OK_KLT=5
     };
 
@@ -275,6 +276,7 @@ protected:
     int mMaxFrames;
 
     int mnFirstImuFrameId;
+    // 经过多少帧后可以重置IMU，一般设置为和帧率相同，对应的时间是1s
     int mnFramesToResetIMU;
 
     // Threshold close/far points
