@@ -70,7 +70,7 @@ void LocalMapping::SetLoopCloser(LoopClosing* pLoopCloser)
     mpLoopCloser = pLoopCloser;
 }
 
-// 设置追踪线程句柄
+// 设置跟踪线程句柄
 void LocalMapping::SetTracker(Tracking *pTracker)
 {
     mpTracker=pTracker;
@@ -87,10 +87,11 @@ void LocalMapping::Run()
     {
         // Tracking will see that Local Mapping is busy
         // Step 1 告诉Tracking，LocalMapping正处于繁忙状态，请不要给我发送关键帧打扰我
-        // LocalMapping线程处理的关键帧都是Tracking线程发过的
+        // LocalMapping线程处理的关键帧都是Tracking线程发过来的
         SetAcceptKeyFrames(false);
 
         // Check if there are keyframes in the queue
+        // 等待处理的关键帧列表不为空 并且imu正常
         if(CheckNewKeyFrames() && !mbBadImu)
         {
             // std::cout << "LM" << std::endl;
@@ -144,17 +145,22 @@ void LocalMapping::Run()
             // 已经处理完队列中的最后的一个关键帧，并且闭环检测没有请求停止LocalMapping
             if(!CheckNewKeyFrames() && !stopRequested())
             {
+                // 地图中关键帧数目大于2个
                 if(mpAtlas->KeyFramesInMap()>2)
                 {
+                    // Step 6.1 处于IMU模式并且当前关键帧所在的地图已经完成IMU初始化
                     if(mbInertial && mpCurrentKeyFrame->GetMap()->isImuInitialized())
                     {
+                        // 计算上一帧到当前帧相机光心的距离 + 上上帧到上一帧相机光心的距离
                         float dist = cv::norm(mpCurrentKeyFrame->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->GetCameraCenter()) +
                                 cv::norm(mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter());
-
+                        // 如果距离大于5厘米，记录当前KF和上一KF时间戳的差，累加到mTinit
                         if(dist>0.05)
                             mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
+                        // 当前关键帧所在的地图已经完成IMU BA2   
                         if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
                         {
+                            // 如果累计时间差小于10s 并且 距离小于2厘米，认为运动幅度太小，不足以初始化IMU，将mbBadImu设置为true
                             if((mTinit<10.f) && (dist<0.02))
                             {
                                 cout << "Not enough motion for initializing. Reseting..." << endl;
@@ -164,13 +170,16 @@ void LocalMapping::Run()
                                 mbBadImu = true;
                             }
                         }
-
+                        // 条件---------1.1、跟踪成功的内点数目大于75-----1.2、并且是单目--或--2.1、跟踪成功的内点数目大于100-----2.2、并且不是单目             
                         bool bLarge = ((mpTracker->GetMatchesInliers()>75)&&mbMonocular)||((mpTracker->GetMatchesInliers()>100)&&!mbMonocular);
+                        // BA优化局部地图IMU
                         Optimizer::LocalInertialBA(mpCurrentKeyFrame, &mbAbortBA, mpCurrentKeyFrame->GetMap(), bLarge, !mpCurrentKeyFrame->GetMap()->GetIniertialBA2());
                     }
                     else
                     {
+                        // Step 6.2 不是IMU模式或者当前关键帧所在的地图还未完成IMU初始化
                         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+                        // 局部地图BA，不包括IMU数据
 						// 注意这里的第二个参数是按地址传递的,当这里的 mbAbortBA 状态发生变化时，能够及时执行/停止BA
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA);
                         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
@@ -180,6 +189,7 @@ void LocalMapping::Run()
                 t5 = std::chrono::steady_clock::now();
 
                 // Initialize IMU here
+                // Step 7 当前关键帧所在地图的IMU初始化
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
                     if (mbMonocular)
@@ -190,15 +200,21 @@ void LocalMapping::Run()
 
 
                 // Check redundant local Keyframes
+                // Step 8 检测并剔除当前帧相邻的关键帧中冗余的关键帧
+                // 冗余的判定：该关键帧的90%的地图点可以被其它关键帧观测到
                 KeyFrameCulling();
 
                 t6 = std::chrono::steady_clock::now();
-
+                // Step 9 如果累计时间差小于100s 并且 是IMU模式，进行VIBA
                 if ((mTinit<100.0f) && mbInertial)
                 {
+                    // Step 9.1 根据条件判断是否进行VIBA1
+                    // 条件：1、当前关键帧所在的地图还未完成IMU初始化---并且--------2、正常跟踪状态----------
                     if(mpCurrentKeyFrame->GetMap()->isImuInitialized() && mpTracker->mState==Tracking::OK) // Enter here everytime local-mapping is called
                     {
+                        // 当前关键帧所在的地图还未完成VIBA 1
                         if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA1()){
+                            // 如果累计时间差大于5s，开始VIBA 1
                             if (mTinit>5.0f)
                             {
                                 cout << "start VIBA 1" << endl;
@@ -212,7 +228,10 @@ void LocalMapping::Run()
                             }
                         }
                         //else if (mbNotBA2){
+                        // Step 9.2 根据条件判断是否进行VIBA2
+                        // 当前关键帧所在的地图还未完成VIBA 2
                         else if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2()){
+                            // 如果累计时间差大于15s，开始VIBA 2
                             if (mTinit>15.0f){ // 15.0f
                                 cout << "start VIBA 2" << endl;
                                 mpCurrentKeyFrame->GetMap()->SetIniertialBA2();
@@ -226,6 +245,7 @@ void LocalMapping::Run()
                         }
 
                         // scale refinement
+                        // Step 9.3 尺度优化
                         if (((mpAtlas->KeyFramesInMap())<=100) &&
                                 ((mTinit>25.0f && mTinit<25.5f)||
                                 (mTinit>35.0f && mTinit<35.5f)||
@@ -244,7 +264,7 @@ void LocalMapping::Run()
 
             std::chrono::steady_clock::time_point t7 = std::chrono::steady_clock::now();
 
-			// Step 8 将当前帧加入到闭环检测队列中
+			// Step 10 将当前帧加入到闭环检测队列中
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
             std::chrono::steady_clock::time_point t8 = std::chrono::steady_clock::now();
 
@@ -268,13 +288,13 @@ void LocalMapping::Run()
             //--
 
         }
-        else if(Stop() && !mbBadImu)
+        else if(Stop() && !mbBadImu) // 当要终止当前线程的时候
         {
             // Safe area to stop
             while(isStopped() && !CheckFinish())
             {
                 // cout << "LM: usleep if is stopped" << endl;
-				// 如果还没有结束利索,那么等
+				// 如果还没有结束利索,那么等等它
                 usleep(3000);
             }
             // 然后确定终止了就跳出这个线程的主循环
