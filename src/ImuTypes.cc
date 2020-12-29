@@ -315,7 +315,8 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
     B.rowRange(6,9).colRange(3,6) = 0.5f*dR*dt*dt;
 
     // Update position and velocity jacobians wrt bias correction
-    // ? 更新bias雅克比,计算偏置的雅克比矩阵，pv 分别对ba与bg的偏导数,论文中没推这个值，邱笑晨那边有推导
+    // ? 更新bias雅克比,计算偏置的雅克比矩阵，pv 分别对ba与bg的偏导数,论文中没推这个值，邱笑晨那边也没有推导,
+    // 但论文作者对forster论文公式的基础上做了变形，然后递归更新，参见 https://github.com/UZ-SLAMLab/ORB_SLAM3/issues/212
     // 因为随着时间推移，不可能每次都重新计算雅克比矩阵，所以需要做J(k+1) = j(k) + (~)这类事，分解方式与AB矩阵相同
     JPa = JPa + JVa*dt -0.5f*dR*dt*dt;
     JPg = JPg + JVg*dt -0.5f*dR*dt*dt*Wacc*JRg;
@@ -341,6 +342,7 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
 
     // Update rotation jacobian wrt bias correction
     // 计算偏置的雅克比矩阵，r对bg的导数，∂ΔRij/∂bg = (ΔRjj-1) * ∂ΔRij-1/∂bg - Jr(j-1)*t
+    // 论文作者对forster论文公式的基础上做了变形，然后递归更新，参见 https://github.com/UZ-SLAMLab/ORB_SLAM3/issues/212
     JRg = dRi.deltaR.t()*JRg - dRi.rightJ*dt;
 
     // Total integrated time
