@@ -193,7 +193,7 @@ protected:
     bool mHasTumbnail;
     bool mbBad = false;
 
-    bool mbIsInertial;
+    bool mbIsInertial;             //标记是否有imu
     bool mbIMU_BA1;
     bool mbIMU_BA2;
 

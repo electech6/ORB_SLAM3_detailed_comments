@@ -37,11 +37,20 @@ namespace ORB_SLAM3
 {
 
 Verbose::eLevel Verbose::th = Verbose::VERBOSITY_NORMAL;
-
-System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
-               const bool bUseViewer, const int initFr, const string &strSequence, const string &strLoadingFile):
-    mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false), mbResetActiveMap(false),
-    mbActivateLocalizationMode(false), mbDeactivateLocalizationMode(false)
+// 系统的构造函数，将会启动其他的线程
+System::System(const string &strVocFile,                //词袋文件所在路径
+               const string &strSettingsFile,           //配置文件所在路径 
+               const eSensor sensor,                    //传感器类型 
+               const bool bUseViewer,                   //是否使用可视化界面 
+               const int initFr,                        //initFr表示初始化帧的id,开始设置为0
+               const string &strSequence,               //序列名,在跟踪线程和局部建图线程用得到
+               const string &strLoadingFile             //看起来作者貌似想加地图重载功能的一个参数
+               ):
+                mSensor(sensor),                        //初始化传感器类型
+                mpViewer(static_cast<Viewer*>(NULL)),   // ?空。。。对象指针？  TODO 
+                mbReset(false), mbResetActiveMap(false),// ?重新设置ActiveMap  
+                mbActivateLocalizationMode(false),      // ?是否开启局部定位功能开关
+                mbDeactivateLocalizationMode(false)     // ?没有这个模式转换标志
 {
     // Output welcome message
     cout << endl <<
@@ -54,15 +63,15 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     cout << "Input sensor was set to: ";
     // Step 1 输出当前传感器类型
     if(mSensor==MONOCULAR)
-        cout << "Monocular" << endl;
+        cout << "Monocular" << endl;             //单目
     else if(mSensor==STEREO)
-        cout << "Stereo" << endl;
+        cout << "Stereo" << endl;                //双目
     else if(mSensor==RGBD)
-        cout << "RGB-D" << endl;
+        cout << "RGB-D" << endl;                 //RGBD相机   
     else if(mSensor==IMU_MONOCULAR)
-        cout << "Monocular-Inertial" << endl;
+        cout << "Monocular-Inertial" << endl;    //单目 + imu
     else if(mSensor==IMU_STEREO)
-        cout << "Stereo-Inertial" << endl;
+        cout << "Stereo-Inertial" << endl;       //双目 + imu
 
     //Check settings file
     // Step 2 读取配置文件
@@ -75,6 +84,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
        exit(-1);
     }
 
+    // ?ORBSLAM3新加的多地图管理功能，这里好像是加载Atlas标识符
     bool loadedAtlas = false;
 
     //----
@@ -172,6 +182,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     // 设置Atlas中的传感器类型
     if (mSensor==IMU_STEREO || mSensor==IMU_MONOCULAR)
+        // ? 如果是有imu的传感器类型，将mbIsInertial设置为imu属性,以后的跟踪和预积分将和这个标志有关
         mpAtlas->SetInertialSensor();
 
     // Step 6 依次创建跟踪、局部建图、闭环、显示线程
@@ -182,7 +193,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //Initialize the Tracking thread
     //(it will live in the main thread of execution, the one that called this constructor)
-    // 创建跟踪线程（主线程）
+    // 创建跟踪线程（主线程）,不会立刻开启,会在对图像和imu预处理后在main主线程种执行
     cout << "Seq. Name: " << strSequence << endl;
     mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
                              mpAtlas, mpKeyFrameDatabase, strSettingsFile, mSensor, strSequence);
@@ -196,6 +207,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     mpLocalMapper->mInitFr = initFr;
     //设置最远3D地图点的深度值，如果超过阈值，说明可能三角化不太准确，丢弃
     mpLocalMapper->mThFarPoints = fsSettings["thFarPoints"];
+    // ? 这里有个疑问,C++中浮点型跟0比较是否用精确?
     if(mpLocalMapper->mThFarPoints!=0)
     {
         cout << "Discard points further than " << mpLocalMapper->mThFarPoints << " m from current camera" << endl;
@@ -381,6 +393,7 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp, const
 
     // Check mode change
     {
+        // 独占锁，主要是为了mbActivateLocalizationMode和mbDeactivateLocalizationMode不会发生混乱
         unique_lock<mutex> lock(mMutexMode);
         // mbActivateLocalizationMode为true会关闭局部地图线程，仅跟踪模式
         if(mbActivateLocalizationMode)
@@ -394,6 +407,7 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp, const
             }
             // 局部地图关闭以后，只进行追踪的线程，只计算相机的位姿，没有对局部地图进行更新
             mpTracker->InformOnlyTracking(true);
+            // 关闭线程可以使得别的线程得到更多的资源
             mbActivateLocalizationMode = false;
         }
         if(mbDeactivateLocalizationMode)
@@ -413,6 +427,7 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp, const
             mbReset = false;
             mbResetActiveMap = false;
         }
+        //如果检测到重置活动地图,讲重置地图设置
         else if(mbResetActiveMap)
         {
             cout << "SYSTEM-> Reseting active map in monocular case" << endl;

@@ -149,30 +149,44 @@ cv::Mat InverseRightJacobianSO3(const cv::Mat &v)
     return InverseRightJacobianSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
 }
 
-
+/**
+ * @brief                  计算旋转角度积分量
+ * 
+ * @param[in] angVel       陀螺仪数据
+ * @param[in] imuBias      陀螺仪偏置
+ * @param[in] time         两帧间的时间差
+ */
 IntegratedRotation::IntegratedRotation(const cv::Point3f &angVel, const Bias &imuBias, const float &time):
     deltaT(time)
 {
+    //得到考虑偏置后的角度旋转
     const float x = (angVel.x-imuBias.bwx)*time;
     const float y = (angVel.y-imuBias.bwy)*time;
     const float z = (angVel.z-imuBias.bwz)*time;
 
     cv::Mat I = cv::Mat::eye(3,3,CV_32F);
 
+    //计算旋转矩阵的模值，后面用罗德里格公式计算旋转矩阵时会用到
     const float d2 = x*x+y*y+z*z;
     const float d = sqrt(d2);
 
+    //角度转成叉积的矩阵形式
     cv::Mat W = (cv::Mat_<float>(3,3) << 0, -z, y,
                  z, 0, -x,
                  -y,  x, 0);
+    // eps = 1e-4 是一个小量，根据罗德里格斯公式求极限，后面的高阶小量忽略掉得到此式
     if(d<eps)
     {
+        //forster 经典预积分论文公式（4）
         deltaR = I + W;
+        //小量时，右扰动 Jr = I
         rightJ = cv::Mat::eye(3,3,CV_32F);
     }
     else
     {
+        //forster 经典预积分论文公式（3）
         deltaR = I + W*sin(d)/d + W*W*(1.0f-cos(d))/d2;
+        //forster 经典预积分论文公式（8）
         rightJ = I - W*(1.0f-cos(d))/d2 + W*W*(d-sin(d))/(d2*d);
     }
 }
@@ -252,8 +266,16 @@ void Preintegrated::Reintegrate()
         IntegrateNewMeasurement(aux[i].a,aux[i].w,aux[i].t);
 }
 
+/**
+ * @brief 预积分计算，更新noise
+ * 
+ * @param[in] acceleration  加速度计数据
+ * @param[in] angVel        陀螺仪数据
+ * @param[in] dt            两帧之间时间差
+ */
 void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, const cv::Point3f &angVel, const float &dt)
 {
+    // 保存imu数据，利用中值积分的结果构造一个预积分类保存在mvMeasurements中
     mvMeasurements.push_back(integrable(acceleration,angVel,dt));
 
     // Position is updated firstly, as it depends on previously computed velocity and rotation.
@@ -261,20 +283,28 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
     // Rotation is the last to be updated.
 
     //Matrices to compute covariance
+    // Step 1.构造协方差矩阵 参考Forster论文公式（62），邱笑晨的《预积分总结与公式推导》的P12页也有详细推导:η_ij = A * η_i,j-1 + B_j-1 * η_j-1
+    // ? 位姿第一个被更新，速度第二（因为这两个只依赖前一帧计算的旋转矩阵和速度），后面再更新旋转角度
+    // 噪声矩阵的传递矩阵，这部分用于计算i到j-1历史噪声或者协方差
     cv::Mat A = cv::Mat::eye(9,9,CV_32F);
+    // 噪声矩阵的传递矩阵，这部分用于计算j-1新的噪声或协方差，这两个矩阵里面的数都是当前时刻的，计算主要是为了下一时刻使用
     cv::Mat B = cv::Mat::zeros(9,6,CV_32F);
-
+    
+    // 考虑偏置后的加速度、角速度
     cv::Mat acc = (cv::Mat_<float>(3,1) << acceleration.x-b.bax,acceleration.y-b.bay, acceleration.z-b.baz);
     cv::Mat accW = (cv::Mat_<float>(3,1) << angVel.x-b.bwx, angVel.y-b.bwy, angVel.z-b.bwz);
 
+    // 记录平均加速度和角速度
     avgA = (dT*avgA + dR*acc*dt)/(dT+dt);
     avgW = (dT*avgW + accW*dt)/(dT+dt);
-
+    
     // Update delta position dP and velocity dV (rely on no-updated delta rotation)
+    // 根据没有更新的dR来更新dP与dV  eq.(38)
     dP = dP + dV*dt + 0.5f*dR*acc*dt*dt;
     dV = dV + dR*acc*dt;
 
     // Compute velocity and position parts of matrices A and B (rely on non-updated delta rotation)
+    // 根据η_ij = A * η_i,j-1 + B_j-1 * η_j-1中的Ａ矩阵和Ｂ矩阵对速度和位移进行更新
     cv::Mat Wacc = (cv::Mat_<float>(3,3) << 0, -acc.at<float>(2), acc.at<float>(1),
                                                    acc.at<float>(2), 0, -acc.at<float>(0),
                                                    -acc.at<float>(1), acc.at<float>(0), 0);
@@ -285,27 +315,36 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
     B.rowRange(6,9).colRange(3,6) = 0.5f*dR*dt*dt;
 
     // Update position and velocity jacobians wrt bias correction
+    // ? 更新bias雅克比,计算偏置的雅克比矩阵，pv 分别对ba与bg的偏导数,论文中没推这个值，邱笑晨那边有推导
+    // 因为随着时间推移，不可能每次都重新计算雅克比矩阵，所以需要做J(k+1) = j(k) + (~)这类事，分解方式与AB矩阵相同
     JPa = JPa + JVa*dt -0.5f*dR*dt*dt;
     JPg = JPg + JVg*dt -0.5f*dR*dt*dt*Wacc*JRg;
     JVa = JVa - dR*dt;
     JVg = JVg - dR*dt*Wacc*JRg;
 
     // Update delta rotation
+    // Step 2. 构造函数，会根据更新后的bias进行角度积分
     IntegratedRotation dRi(angVel,b,dt);
+    // 强行归一化使其符合旋转矩阵的格式
     dR = NormalizeRotation(dR*dRi.deltaR);
 
     // Compute rotation parts of matrices A and B
+    // 补充AB矩阵
     A.rowRange(0,3).colRange(0,3) = dRi.deltaR.t();
     B.rowRange(0,3).colRange(0,3) = dRi.rightJ*dt;
-
+    // 小量delta初始为0，更新后通常也为0，故省略了小量的更新
     // Update covariance
+    // Step 3.更新协方差，frost经典预积分论文的第63个公式，推导了噪声（ηa, ηg）对dR dV dP 的影响
     C.rowRange(0,9).colRange(0,9) = A*C.rowRange(0,9).colRange(0,9)*A.t() + B*Nga*B.t();
+    // 这一部分最开始是0矩阵，随着积分次数增加，每次都加上随机游走，偏置的信息矩阵
     C.rowRange(9,15).colRange(9,15) = C.rowRange(9,15).colRange(9,15) + NgaWalk;
 
     // Update rotation jacobian wrt bias correction
+    // 计算偏置的雅克比矩阵，r对bg的导数，∂ΔRij/∂bg = (ΔRjj-1) * ∂ΔRij-1/∂bg - Jr(j-1)*t
     JRg = dRi.deltaR.t()*JRg - dRi.rightJ*dt;
 
     // Total integrated time
+    // 更新总时间
     dT += dt;
 }
 

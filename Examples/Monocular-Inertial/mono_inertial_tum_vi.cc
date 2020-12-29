@@ -103,8 +103,10 @@ int main(int argc, char **argv)
 
         // Find first imu to be considered, supposing imu measurements start first
         // Step 3 默认IMU数据早于图像数据记录，找到和第一帧图像时间戳最接近的imu时间戳索引，记录在first_imu[seq]中
-        while(vTimestampsImu[seq][first_imu[seq]]<=vTimestampsCam[seq][0])
+        while(vTimestampsImu[seq][first_imu[seq]]<=vTimestampsCam[seq][0]){
             first_imu[seq]++;
+            cout << "first_imu[seq] = "  << first_imu[seq] << endl;
+        }
         // 因为上面退出while循环时IMU时间戳刚刚超过图像时间戳，所以这里需要再减一个索引    
         first_imu[seq]--; // first imu measurement to be considered
 
@@ -125,22 +127,26 @@ int main(int argc, char **argv)
     // Step 4 SLAM系统的初始化，包括读取配置文件、字典，创建跟踪、局部建图、闭环、显示线程
     ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::IMU_MONOCULAR, true, 0, file_name);
 
+    //遍历所有数据
     int proccIm = 0;
     for (seq = 0; seq<num_seq; seq++)
     {
         // Main loop
         cv::Mat im;
+        //存放imu数据容器,包含该加速度,角速度,时间戳
         vector<ORB_SLAM3::IMU::Point> vImuMeas;
         proccIm = 0;
+        //直方图均衡化,直方图均衡化的思想就是这样的:
+        //假设我有灰度级255的图像，但是都是属于［100，110］的灰度，图像对比度就很低，我应该尽可能拉到整个［0，255］
         cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
         for(int ni=0; ni<nImages[seq]; ni++, proccIm++)
         {
             // Read image from file
-            // Step 5 读取每一帧图像并转换为灰度图存储在im
+            // Step 5 读取每一帧图像并转换为灰度图存储在im,seq表示第几个数据集,ni表示这个数据集的第几个数据
             im = cv::imread(vstrImageFilenames[seq][ni],cv::IMREAD_GRAYSCALE);
 
             // clahe
-            // ?这里是什么作用？
+            //直方图均衡化
             clahe->apply(im,im);
 
 
@@ -163,7 +169,7 @@ int main(int argc, char **argv)
             {
                 // cout << "t_cam " << tframe << endl;
                 // Step 6 把上一图像帧和当前图像帧之间的imu信息存储在vImuMeas里
-                // 注意第一个图像帧没有对应的imu数据
+                // 注意第一个图像帧没有对应的imu数据 //?是否存在一帧,因为之前是从最接近图像第一帧的imu算起,可能无效
                 while(vTimestampsImu[seq][first_imu[seq]]<=vTimestampsCam[seq][ni])
                 {
                     vImuMeas.push_back(ORB_SLAM3::IMU::Point(vAcc[seq][first_imu[seq]].x,vAcc[seq][first_imu[seq]].y,vAcc[seq][first_imu[seq]].z,

@@ -342,6 +342,7 @@ void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScale
 void Map::SetInertialSensor()
 {
     unique_lock<mutex> lock(mMutexMap);
+    //将mbIsInertial设置为true,将其设置为imu属性,以后的跟踪和预积分将和这个标志有关
     mbIsInertial = true;
 }
 

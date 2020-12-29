@@ -244,6 +244,7 @@ bool Atlas::isInertial()
 void Atlas::SetInertialSensor()
 {
     unique_lock<mutex> lock(mMutexAtlas);
+    //接着又调用Map类的SetInertialSensor成员函数,将其设置为imu属性,以后的跟踪和预积分将和这个标志有关
     mpCurrentMap->SetInertialSensor();
 }
 

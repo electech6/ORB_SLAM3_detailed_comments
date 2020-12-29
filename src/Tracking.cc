@@ -1073,7 +1073,8 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp,
     }
     else if(mSensor == System::IMU_MONOCULAR)
     {
-        if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)
+        //判断该帧是不是初始化
+        if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)  //没有成功初始化的前一个状态就是NO_IMAGES_YET
         {
             mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth,&mLastFrame,*mpImuCalib);
         }
@@ -1104,6 +1105,7 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp,
     f_track_stats << mvpLocalMapPoints.size() << ",";
     f_track_stats << setprecision(6) << t_track << endl;*/
 
+//开启保存数据模式
 #ifdef SAVE_TIMES
     f_track_times << mCurrentFrame.mTimeORB_Ext << ",";
     f_track_times << mCurrentFrame.mTimeStereoMatch << ",";
@@ -1118,7 +1120,7 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp,
     return mCurrentFrame.mTcw.clone();
 }
 
-
+//将imu数据存放在mlQueueImuData的list链表里
 void Tracking::GrabImuData(const IMU::Point &imuMeasurement)
 {
     unique_lock<mutex> lock(mMutexImuQueue);
@@ -1127,11 +1129,13 @@ void Tracking::GrabImuData(const IMU::Point &imuMeasurement)
 
 void Tracking::PreintegrateIMU()
 {
-    //cout << "start preintegration" << endl;
-
+    // Step 1.拿到两两帧之间待处理的预积分数据，组成一个集合 
+    // cout << "start preintegration" << endl;
+    // 上一帧不存在,说明两帧之间没有imu数据，不进行预积分
     if(!mCurrentFrame.mpPrevFrame)
     {
         Verbose::PrintMess("non prev frame ", Verbose::VERBOSITY_NORMAL);
+        // ? 当前帧是否进行预积分标志
         mCurrentFrame.setIntegrated();
         return;
     }
@@ -1140,6 +1144,7 @@ void Tracking::PreintegrateIMU()
 
     mvImuFromLastFrame.clear();
     mvImuFromLastFrame.reserve(mlQueueImuData.size());
+    // 没有imu数据,不进行预积分
     if(mlQueueImuData.size() == 0)
     {
         Verbose::PrintMess("Not IMU data in mlQueueImuData!!", Verbose::VERBOSITY_NORMAL);
@@ -1149,17 +1154,22 @@ void Tracking::PreintegrateIMU()
 
     while(true)
     {
+        // 数据还没有时,会等待一段时间,直到mlQueueImuData中有imu数据.一开始不需要等待
         bool bSleep = false;
         {
             unique_lock<mutex> lock(mMutexImuQueue);
             if(!mlQueueImuData.empty())
             {
+                // 拿到第一个imu数据作为起始数据
                 IMU::Point* m = &mlQueueImuData.front();
                 cout.precision(17);
+                // imu起始数据会比当前帧的前一帧时间戳早,如果相差0.001则舍弃这个imu数据
                 if(m->t<mCurrentFrame.mpPrevFrame->mTimeStamp-0.001l)
                 {
                     mlQueueImuData.pop_front();
                 }
+                // 同样最后一个的imu数据时间戳也不能理当前帧时间间隔多余0.001 
+                // ? (时间戳本身的差值,单位是s秒,tum数据集里面是19位时间戳,单位为ns,这里可能只保留了10位整数和9位小数)
                 else if(m->t<mCurrentFrame.mTimeStamp-0.001l)
                 {
                     mvImuFromLastFrame.push_back(*m);
@@ -1167,6 +1177,7 @@ void Tracking::PreintegrateIMU()
                 }
                 else
                 {
+                    // 得到两帧间的imu数据放入mvImuFromLastFrame中,得到后面预积分的处理数据
                     mvImuFromLastFrame.push_back(*m);
                     break;
                 }
@@ -1181,32 +1192,55 @@ void Tracking::PreintegrateIMU()
             usleep(500);
     }
 
-
+    // Step 2.对两帧之间进行中值积分处理
+    // m个imu组数据会有m-1个预积分量
     const int n = mvImuFromLastFrame.size()-1;
+    // 构造imu预处理器,并初始化标定数据
     IMU::Preintegrated* pImuPreintegratedFromLastFrame = new IMU::Preintegrated(mLastFrame.mImuBias,mCurrentFrame.mImuCalib);
-
+    // 针对预积分位置的不同做不同中值积分的处理
+    /**
+     *  根据上面imu帧的筛选，IMU与图像帧的时序如下：
+     *  Frame---IMU0---IMU1---IMU2---IMU3---IMU4---------------IMUx---Frame---IMUx+1
+     *  T_------T0-----T1-----T2-----T3-----T4-----------------Tx-----_T------Tx+1
+     *  A_------A0-----A1-----A2-----A3-----A4-----------------Ax-----_T------Ax+1
+     *  W_------W0-----W1-----W2-----W3-----W4-----------------Wx-----_T------Wx+1
+     *  T_和_T分别表示上一图像帧和当前图像帧的时间戳，A(加速度数据)，W(陀螺仪数据)，同理
+     */
     for(int i=0; i<n; i++)
     {
         float tstep;
         cv::Point3f acc, angVel;
+        // 第一帧数据但不是最后两帧,imu总帧数大于2
         if((i==0) && (i<(n-1)))
         {
+            // 时间差作为积分量
             float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
+            // 根据上面分析的IMU与图像帧的时序分析，获取当前imu到上一帧的时间间隔
+            // 在加加速度不变的假设上算出第一帧图像到第二个imu数据的中值积分
             float tini = mvImuFromLastFrame[i].t-mCurrentFrame.mpPrevFrame->mTimeStamp;
+            // ? 这里采用离散中值积分进行预积分,获取当前imu到上一帧的时间间隔
+            // 设当前时刻imu的加速度a0，下一时刻加速度a1，时间间隔tab 为t10，tini t0p
+            // 正常情况下时为了求上一帧到当前时刻imu的一个平均加速度，但是imu时间不会正好落在上一帧图像的时刻，需要做补偿，要求得a0时刻到上一帧这段时间加速度的改变量
+            // 有了这个改变量将其加到a0上之后就可以表示上一帧时的加速度了。其中a0 - (a1-a0)*(tini/tab) 为上一帧时刻的加速度再加上a1 之后除以2就为这段时间的加速度平均值
+            // 其中tstep表示a1到上一帧的时间间隔，a0 - (a1-a0)*(tini/tab)这个式子中tini可以是正也可以是负表示时间上的先后，(a1-a0)也是一样，多种情况下这个式子依然成立
             acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a-
                     (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tini/tab))*0.5f;
             angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w-
                     (mvImuFromLastFrame[i+1].w-mvImuFromLastFrame[i].w)*(tini/tab))*0.5f;
+            // 上一帧图像到下一帧imu（也就是第二个imu数据）的时间差
             tstep = mvImuFromLastFrame[i+1].t-mCurrentFrame.mpPrevFrame->mTimeStamp;
         }
+        //中间帧直接求中值
         else if(i<(n-1))
         {
             acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a)*0.5f;
             angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w)*0.5f;
             tstep = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
         }
+        //最后一帧,但不是第一帧
         else if((i>0) && (i==(n-1)))
         {
+            // 直到倒数第二个imu时刻时，计算过程跟第一时刻类似，都需要考虑帧与imu时刻的关系
             float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
             float tend = mvImuFromLastFrame[i+1].t-mCurrentFrame.mTimeStamp;
             acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a-
@@ -1215,23 +1249,28 @@ void Tracking::PreintegrateIMU()
                     (mvImuFromLastFrame[i+1].w-mvImuFromLastFrame[i].w)*(tend/tab))*0.5f;
             tstep = mCurrentFrame.mTimeStamp-mvImuFromLastFrame[i].t;
         }
+        //只有两帧的情况
         else if((i==0) && (i==(n-1)))
         {
+            // ? 就两个数据时使用第一个时刻的，之前size减一了，最后一帧imu好像没遍历，这时候应该还有一帧在后面，但这里直接没有算中值积分？
             acc = mvImuFromLastFrame[i].a;
             angVel = mvImuFromLastFrame[i].w;
             tstep = mCurrentFrame.mTimeStamp-mCurrentFrame.mpPrevFrame->mTimeStamp;
         }
-
+        // Step 3.依次进行预积分计算
+        // 应该是必存在的吧，一个是相对上一关键帧，一个是相对上一帧
         if (!mpImuPreintegratedFromLastKF)
             cout << "mpImuPreintegratedFromLastKF does not exist" << endl;
         mpImuPreintegratedFromLastKF->IntegrateNewMeasurement(acc,angVel,tstep);
         pImuPreintegratedFromLastFrame->IntegrateNewMeasurement(acc,angVel,tstep);
     }
 
+    // 记录当前预积分的图像帧
     mCurrentFrame.mpImuPreintegratedFrame = pImuPreintegratedFromLastFrame;
     mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF;
     mCurrentFrame.mpLastKeyFrame = mpLastKeyFrame;
 
+    // ? 设置为已预积分状态
     mCurrentFrame.setIntegrated();
 
     Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG);
@@ -1399,7 +1438,11 @@ void Tracking::ResetFrameIMU()
 
 /**
  * @brief 跟踪过程，包括恒速模型跟踪、参考关键帧跟踪、局部地图跟踪
+ * track包含两部分：估计运动、跟踪局部地图
  * 
+ * Step 1：初始化
+ * Step 2：跟踪
+ * Step 3：记录位姿信息，用于轨迹复现
  */
 void Tracking::Track()
 {
@@ -1409,7 +1452,7 @@ void Tracking::Track()
     mTime_LocalMapTrack = 0;
     mTime_NewKF_Dec = 0;
 #endif
-
+    // ? 还不清楚这个标识符,跟绘图相关?
     if (bStepByStep)
     {
         while(!mbStep)
@@ -1445,12 +1488,14 @@ void Tracking::Track()
         {
             // 如果当前图像时间戳和前一帧图像时间戳大于1s，说明时间戳明显跳变了，重置地图后直接返回
             cout << "id last: " << mLastFrame.mnId << "    id curr: " << mCurrentFrame.mnId << endl;
+            //根据是否是imu模式,进行imu的补偿
             if(mpAtlas->isInertial())
             {
                 // 如果当前地图imu成功初始化
                 if(mpAtlas->isImuInitialized())
                 {
                     cout << "Timestamp jump detected. State set to LOST. Reseting IMU integration..." << endl;
+                    // ? BA2标志代表什么?,BA优化成功?
                     if(!pCurrentMap->GetIniertialBA2())
                     {
                         // 如果当前子图中imu没有经过BA2，重置active地图
@@ -1474,8 +1519,9 @@ void Tracking::Track()
         }
     }
 
-    // Step 3 IMU模式下设置IMU的Bias参数
+    // Step 3 IMU模式下设置IMU的Bias参数,还要保证上一帧存在非空
     if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO) && mpLastKeyFrame)
+        //认为bias在两帧间不变
         mCurrentFrame.SetNewBias(mpLastKeyFrame->GetImuBias());
 
     if(mState==NO_IMAGES_YET)
@@ -1484,7 +1530,7 @@ void Tracking::Track()
     }
 
     mLastProcessedState=mState;
-    // Step 4 IMU模式下对IMU数据进行预积分
+    // Step 4 IMU模式下对IMU数据进行预积分 -> // ? 没有创建地图的情况下
     if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO) && !mbCreatedMap)
     {
 #ifdef SAVE_TIMES
