@@ -488,15 +488,24 @@ void Frame::SetVelocity(const cv::Mat &Vwb)
 {
     mVw = Vwb.clone();
 }
-
+/**
+ * @brief 设置IMU的速度预测位姿，最后用imu到相机的位姿和世界坐标系到imu的位姿更新相机和世界坐标系的位姿
+ *        目的：得到相机在世界坐标系的位姿
+ * 
+ * @param[in] Rwb     旋转值
+ * @param[in] twb     位移值  
+ * @param[in] Vwb     速度值
+ */
 void Frame::SetImuPoseVelocity(const cv::Mat &Rwb, const cv::Mat &twb, const cv::Mat &Vwb)
 {
+    //Twb -> Tbw 求逆的过程，根据旋转矩阵的逆求得，参见十四讲（第一版）P44公式（3.13）
     mVw = Vwb.clone();
     cv::Mat Rbw = Rwb.t();
     cv::Mat tbw = -Rbw*twb;
     cv::Mat Tbw = cv::Mat::eye(4,4,CV_32F);
     Rbw.copyTo(Tbw.rowRange(0,3).colRange(0,3));
     tbw.copyTo(Tbw.rowRange(0,3).col(3));
+    // 外参值mImuCalib.Tcb与Tbw求mTcw
     mTcw = mImuCalib.Tcb*Tbw;
     UpdatePoseMatrices();
 }

@@ -1276,7 +1276,12 @@ void Tracking::PreintegrateIMU()
     Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG);
 }
 
-
+/**
+ * @brief 跟踪不成功的时候，用初始化好的imu数据做跟踪处理
+ * 
+ * @return true 
+ * @return false 
+ */
 bool Tracking::PredictStateIMU()
 {
     if(!mCurrentFrame.mpPrevFrame)
@@ -1284,20 +1289,26 @@ bool Tracking::PredictStateIMU()
         Verbose::PrintMess("No last frame", Verbose::VERBOSITY_NORMAL);
         return false;
     }
-
+    // 地图更新时，并且上一个图像关键帧存在
     if(mbMapUpdated && mpLastKeyFrame)
-    {
+    {   
         const cv::Mat twb1 = mpLastKeyFrame->GetImuPosition();
         const cv::Mat Rwb1 = mpLastKeyFrame->GetImuRotation();
         const cv::Mat Vwb1 = mpLastKeyFrame->GetVelocity();
 
         const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
+        // ? mpImuPreintegratedFromLastKF是将图像帧转成imu格式的？
         const float t12 = mpImuPreintegratedFromLastKF->dT;
-
+        // 计算当前帧在世界坐标系的位姿,原理都是用预积分的位姿（预积分的值不会变化）与上一帧的位姿（会迭代变化）进行更新 
+        // 旋转 R_wb2 = R_wb1 * R_b1b2
         cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mpImuPreintegratedFromLastKF->GetDeltaRotation(mpLastKeyFrame->GetImuBias()));
+        // 位移 
         cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mpImuPreintegratedFromLastKF->GetDeltaPosition(mpLastKeyFrame->GetImuBias());
+        // 速度
         cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mpImuPreintegratedFromLastKF->GetDeltaVelocity(mpLastKeyFrame->GetImuBias());
+        // 设置当前帧的世界坐标系的相机位姿
         mCurrentFrame.SetImuPoseVelocity(Rwb2,twb2,Vwb2);
+        // ? 预测当前帧imu在世界坐标系的位姿，以及记录偏置bias和bias更新
         mCurrentFrame.mPredRwb = Rwb2.clone();
         mCurrentFrame.mPredtwb = twb2.clone();
         mCurrentFrame.mPredVwb = Vwb2.clone();
@@ -1305,12 +1316,14 @@ bool Tracking::PredictStateIMU()
         mCurrentFrame.mPredBias = mCurrentFrame.mImuBias;
         return true;
     }
+    // 地图未更新时
     else if(!mbMapUpdated)
     {
         const cv::Mat twb1 = mLastFrame.GetImuPosition();
         const cv::Mat Rwb1 = mLastFrame.GetImuRotation();
         const cv::Mat Vwb1 = mLastFrame.mVw;
         const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
+        // ? mpImuPreintegratedFrame是当前帧上一帧，未必是关键帧的图像帧？
         const float t12 = mCurrentFrame.mpImuPreintegratedFrame->dT;
 
         cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaRotation(mLastFrame.mImuBias));
