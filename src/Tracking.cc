@@ -1277,7 +1277,10 @@ void Tracking::PreintegrateIMU()
 }
 
 /**
- * @brief 跟踪不成功的时候，用初始化好的imu数据做跟踪处理
+ * @brief 跟踪不成功的时候，用初始化好的imu数据做跟踪处理，通过IMU预测状态
+ * 两个地方用到：
+ * 1. 匀速模型计算速度,但并没有给当前帧位姿赋值；
+ * 2. 跟踪丢失时不直接判定丢失，通过这个函数预测当前帧位姿看看能不能拽回来，代替纯视觉中的重定位
  * 
  * @return true 
  * @return false 
@@ -1289,6 +1292,13 @@ bool Tracking::PredictStateIMU()
         Verbose::PrintMess("No last frame", Verbose::VERBOSITY_NORMAL);
         return false;
     }
+    // 总结下都在什么时候地图更新，也就是mbMapUpdated为true
+    // 1. 回环或融合
+    // 2. 局部地图LocalBundleAdjustment
+    // 3. IMU三阶段的初始化
+    // 下面的代码流程一模一样，只不过计算时相对的帧不同，地图有更新后相对于上一关键帧做的，反之相对于上一帧
+    // 地图更新后会更新关键帧与MP，所以相对于关键帧更准
+    // 而没更新的话，距离上一帧更近，计算起来误差更小
     // 地图更新时，并且上一个图像关键帧存在
     if(mbMapUpdated && mpLastKeyFrame)
     {   
@@ -1297,14 +1307,14 @@ bool Tracking::PredictStateIMU()
         const cv::Mat Vwb1 = mpLastKeyFrame->GetVelocity();
 
         const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
-        // ? mpImuPreintegratedFromLastKF是将图像帧转成imu格式的？
+        // ? mpImuPreintegratedFromLastKF是上一帧关键帧？
         const float t12 = mpImuPreintegratedFromLastKF->dT;
         // 计算当前帧在世界坐标系的位姿,原理都是用预积分的位姿（预积分的值不会变化）与上一帧的位姿（会迭代变化）进行更新 
         // 旋转 R_wb2 = R_wb1 * R_b1b2
         cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mpImuPreintegratedFromLastKF->GetDeltaRotation(mpLastKeyFrame->GetImuBias()));
-        // 位移 
+        // 位移 公式可见Forster论文公式32，只是要变化一下，邱笑晨的那篇文档有详细推导
         cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mpImuPreintegratedFromLastKF->GetDeltaPosition(mpLastKeyFrame->GetImuBias());
-        // 速度
+        // 速度 公式可见Forster论文公式32，只是要变化一下，邱笑晨的那篇文档有详细推导
         cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mpImuPreintegratedFromLastKF->GetDeltaVelocity(mpLastKeyFrame->GetImuBias());
         // 设置当前帧的世界坐标系的相机位姿
         mCurrentFrame.SetImuPoseVelocity(Rwb2,twb2,Vwb2);
@@ -1323,7 +1333,7 @@ bool Tracking::PredictStateIMU()
         const cv::Mat Rwb1 = mLastFrame.GetImuRotation();
         const cv::Mat Vwb1 = mLastFrame.mVw;
         const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
-        // ? mpImuPreintegratedFrame是当前帧上一帧，未必是关键帧的图像帧？
+        // mpImuPreintegratedFrame是当前帧上一帧，不一定是关键帧
         const float t12 = mCurrentFrame.mpImuPreintegratedFrame->dT;
 
         cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaRotation(mLastFrame.mImuBias));
@@ -1727,20 +1737,21 @@ void Tracking::Track()
                         }
                     }
                 }
-                else if (mState == LOST)
+                else if (mState == LOST)  // 上一帧为最近丢失且重定位失败时
                 {
                     // Step 6.6 如果是LOST状态
+                    // 开启一个新地图
                     Verbose::PrintMess("A new map is started...", Verbose::VERBOSITY_NORMAL);
 
                     if (pCurrentMap->KeyFramesInMap()<10)
                     {
-                        //当前地图中关键帧数目小于10，重置当前地图
+                        // 当前地图中关键帧数目小于10，重置当前地图
                         mpSystem->ResetActiveMap();
                         cout << "Reseting current map..." << endl;
                     }else
-                        //当前地图中关键帧数目超过10，创建新地图
+                        // 当前地图中关键帧数目超过10，创建新地图
                         CreateMapInAtlas();
-
+                    // 干掉上一个关键帧
                     if(mpLastKeyFrame)
                         mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
 
@@ -1758,7 +1769,7 @@ void Tracking::Track()
 #endif
 
         }
-        else
+        else  // 纯定位模式，时间关系暂时不看 TOSEE
         {
             // Localization Mode: Local Mapping is deactivated (TODO Not available in inertial mode)
             // 只进行跟踪tracking，局部地图不工作
@@ -1856,12 +1867,18 @@ void Tracking::Track()
             }
         }
         // 将最新的关键帧作为当前帧的参考关键帧
+        // mpReferenceKF先是上一时刻的参考关键帧，如果当前为新关键帧则变成当前关键帧，如果不是新的关键帧则先为上一帧的参考关键帧，而后经过更新局部关键帧重新确定
         if(!mCurrentFrame.mpReferenceKF)
             mCurrentFrame.mpReferenceKF = mpReferenceKF;
 
         // If we have an initial estimation of the camera pose and matching. Track the local map.
         // Step 7 在跟踪得到当前帧初始姿态后，现在对local map进行跟踪得到更多的匹配，并优化当前位姿
         // 前面只是跟踪一帧得到初始位姿，这里搜索局部关键帧、局部地图点，和当前帧进行投影匹配，得到更多匹配的MapPoints后进行Pose优化
+        // 在帧间匹配得到初始的姿态后，现在对local map进行跟踪得到更多的匹配，并优化当前位姿
+        // local map:当前帧、当前帧的MapPoints、当前关键帧与其它关键帧共视关系
+        // 前面主要是两两跟踪（恒速模型跟踪上一帧、跟踪参考帧），这里搜索局部关键帧后搜集所有局部MapPoints，
+        // 然后将局部MapPoints和当前帧进行投影匹配，得到更多匹配的MapPoints后进行Pose优化
+        // If we have an initial estimation of the camera pose and matching. Track the local map.
         if(!mbOnlyTracking)
         {
             if(bOK)
@@ -1890,13 +1907,31 @@ void Tracking::Track()
             if(bOK && !mbVO)
                 bOK = TrackLocalMap();
         }
+        // 到此为止跟踪确定位姿阶段结束，下面开始做收尾工作和为下一帧做准备
 
+        // 查看到此为止时的两个状态变化
+        // bOK的历史变化---上一帧跟踪成功---当前帧跟踪成功---局部地图跟踪成功---true                     -->OK   1 跟踪局部地图成功
+        //          \               \              \---局部地图跟踪失败---false
+        //           \               \---当前帧跟踪失败---false
+        //            \---上一帧跟踪失败---重定位成功---局部地图跟踪成功---true                       -->OK  2 重定位
+        //                          \           \---局部地图跟踪失败---false
+        //                           \---重定位失败---false
+
+        //
+        // mState的历史变化---上一帧跟踪成功---当前帧跟踪成功---局部地图跟踪成功---OK                  -->OK  1 跟踪局部地图成功
+        //            \               \              \---局部地图跟踪失败---OK                  -->OK  3 正常跟踪
+        //             \               \---当前帧跟踪失败---非OK
+        //              \---上一帧跟踪失败---重定位成功---局部地图跟踪成功---非OK
+        //                            \           \---局部地图跟踪失败---非OK
+        //                             \---重定位失败---非OK（传不到这里，因为直接return了）
+        // 由上图可知当前帧的状态OK的条件是跟踪局部地图成功，重定位或正常跟踪都可
         // Step 8 根据上面的操作来判断是否追踪成功
         if(bOK)
             // 此时还OK才说明跟踪成功了
             mState = OK;
-        else if (mState == OK)
+        else if (mState == OK) // 由上图可知只有当正常跟踪成功，但局部地图跟踪失败时执行
         {
+            // 带有IMU时状态变为最近丢失，否则直接丢失
             if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
             {
                 Verbose::PrintMess("Track lost for less than one second...", Verbose::VERBOSITY_NORMAL);
@@ -1931,6 +1966,7 @@ void Tracking::Track()
             pF->mpPrevFrame = new Frame(mLastFrame);
 
             // Load preintegration
+            // 构造预积分处理器
             pF->mpImuPreintegratedFrame = new IMU::Preintegrated(mCurrentFrame.mpImuPreintegratedFrame);
         }
 
@@ -1938,14 +1974,14 @@ void Tracking::Track()
         {
             if(bOK)     // 跟踪成功
             {
-                // 当前帧距离上次重定位帧刚好等于1s，重置IMU
+                // 当前帧距离上次重定位帧刚好等于1s，重置IMU（还未实现 TODO）
                 if(mCurrentFrame.mnId==(mnLastRelocFrameId+mnFramesToResetIMU))
                 {
                     cout << "RESETING FRAME!!!" << endl;
                     ResetFrameIMU();
                 }
                 else if(mCurrentFrame.mnId>(mnLastRelocFrameId+30))
-                    mLastBias = mCurrentFrame.mImuBias;
+                    mLastBias = mCurrentFrame.mImuBias;  // 没啥用，后面会重新赋值后传给普通帧
             }
         }
 
@@ -1954,7 +1990,21 @@ void Tracking::Track()
         mpFrameDrawer->Update(this);
         if(!mCurrentFrame.mTcw.empty())
             mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
+        // 查看到此为止时的两个状态变化
+        // bOK的历史变化---上一帧跟踪成功---当前帧跟踪成功---局部地图跟踪成功---true
+        //          \               \              \---局部地图跟踪失败---false
+        //           \               \---当前帧跟踪失败---false
+        //            \---上一帧跟踪失败---重定位成功---局部地图跟踪成功---true
+        //                          \           \---局部地图跟踪失败---false
+        //                           \---重定位失败---false
 
+        // mState的历史变化---上一帧跟踪成功---当前帧跟踪成功---局部地图跟踪成功---OK
+        //            \               \              \---局部地图跟踪失败---非OK（IMU时为RECENTLY_LOST）
+        //             \               \---当前帧跟踪失败---非OK(地图超过10个关键帧时 RECENTLY_LOST)
+        //              \---上一帧跟踪失败(RECENTLY_LOST)---重定位成功---局部地图跟踪成功---OK
+        //               \                           \           \---局部地图跟踪失败---LOST
+        //                \                           \---重定位失败---LOST（传不到这里，因为直接return了）
+        //                 \--上一帧跟踪失败(LOST)--LOST（传不到这里，因为直接return了）
         // Step 9 如果跟踪成功 或 最近刚刚跟丢，更新速度，清除无效地图点，按需创建关键帧
         if(bOK || mState==RECENTLY_LOST)
         {
@@ -1969,9 +2019,9 @@ void Tracking::Track()
                 mVelocity = mCurrentFrame.mTcw*LastTwc;
             }
             else
-                //否则速度为空
+                // 否则速度为空
                 mVelocity = cv::Mat();
-
+            // 使用IMU积分的位姿显示
             if(mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
                 mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
@@ -2066,7 +2116,15 @@ void Tracking::Track()
         // 保存上一帧的数据,当前帧变上一帧
         mLastFrame = Frame(mCurrentFrame);
     }
-
+    // 查看到此为止
+    // mState的历史变化---上一帧跟踪成功---当前帧跟踪成功---局部地图跟踪成功---OK
+    //            \               \              \---局部地图跟踪失败---非OK（IMU时为RECENTLY_LOST）
+    //             \               \---当前帧跟踪失败---非OK(地图超过10个关键帧时 RECENTLY_LOST)
+    //              \---上一帧跟踪失败(RECENTLY_LOST)---重定位成功---局部地图跟踪成功---OK
+    //               \                           \           \---局部地图跟踪失败---LOST
+    //                \                           \---重定位失败---LOST（传不到这里，因为直接return了）
+    //                 \--上一帧跟踪失败(LOST)--LOST（传不到这里，因为直接return了）
+    // last.记录位姿信息，用于轨迹复现
     // Step 11 记录位姿信息，用于最后保存所有的轨迹
     if(mState==OK || mState==RECENTLY_LOST)
     {

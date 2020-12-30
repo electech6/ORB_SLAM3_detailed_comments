@@ -193,7 +193,7 @@ protected:
     // Fix scale in the stereo/RGB-D case
     bool mbFixScale;
 
-
+    // ? 这里的bool值为什么用mn，疑似bug，后面会用到这个变量自加，但IDE提示bool类型不能自加
     bool mnFullBAIdx;
 
 
