@@ -51,40 +51,68 @@
 
 
 namespace ORB_SLAM3 {
+    /**
+     * @brief MLPnP 构造函数
+     *
+     * @param[in] F                         输入帧的数据
+     * @param[in] vpMapPointMatches         待匹配的特征点
+     * @param[in] mnInliersi                内点的个数
+     * @param[in] mnIterations              Ransac迭代次数
+     * @param[in] mnBestInliers             最佳内点数
+     * @param[in] N                         所有2D点的个数
+     * @param[in] mpCamera                  相机模型，利用该变量对3D点进行投影
+     */
     MLPnPsolver::MLPnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches):
-            mnInliersi(0), mnIterations(0), mnBestInliers(0), N(0), mpCamera(F.mpCamera){
-        mvpMapPointMatches = vpMapPointMatches;
-        mvBearingVecs.reserve(F.mvpMapPoints.size());
-        mvP2D.reserve(F.mvpMapPoints.size());
-        mvSigma2.reserve(F.mvpMapPoints.size());
-        mvP3Dw.reserve(F.mvpMapPoints.size());
-        mvKeyPointIndices.reserve(F.mvpMapPoints.size());
-        mvAllIndices.reserve(F.mvpMapPoints.size());
+            mnInliersi(0),              // 内点的个数
+            mnIterations(0),            // Ransac迭代次数
+            mnBestInliers(0),           // 最佳内点数
+            N(0),                       // 所有2D点的个数                    
+            mpCamera(F.mpCamera)        // 相机模型，利用该变量对3D点进行投影
+    { 
+        mvpMapPointMatches = vpMapPointMatches;               // 待匹配的特征点，是当前帧和候选关键帧用BoW进行快速匹配的结果
+        mvBearingVecs.reserve(F.mvpMapPoints.size());         // ? 初始化3D点的单位向量
+        mvP2D.reserve(F.mvpMapPoints.size());                 // 初始化3D点的投影点
+        mvSigma2.reserve(F.mvpMapPoints.size());              // 初始化卡方检验中的sigma值
+        mvP3Dw.reserve(F.mvpMapPoints.size());                // 初始化3D点坐标
+        mvKeyPointIndices.reserve(F.mvpMapPoints.size());     // 初始化3D点的索引值
+        mvAllIndices.reserve(F.mvpMapPoints.size());          // 初始化所有索引值
 
+        // 一些必要的初始化操作 
         int idx = 0;
         for(size_t i = 0, iend = mvpMapPointMatches.size(); i < iend; i++){
             MapPoint* pMP = vpMapPointMatches[i];
-
+            
+            // 如果pMP存在，则接下来初始化一些参数，否则什么都不做
             if(pMP){
+                // 判断是否是坏点
                 if(!pMP -> isBad()){
+                    // 如果记录的点个数超过总数，则不做任何事情，否则继续记录
                     if(i >= F.mvKeysUn.size()) continue;
                     const cv::KeyPoint &kp = F.mvKeysUn[i];
 
+                    // 保存3D点的投影点
                     mvP2D.push_back(kp.pt);
+
+                    // 保存卡方检验中的sigma值
                     mvSigma2.push_back(F.mvLevelSigma2[kp.octave]);
 
                     //Bearing vector should be normalized
+                    // 特征点投影，并计算单位向量
                     cv::Point3f cv_br = mpCamera->unproject(kp.pt);
                     cv_br /= cv_br.z;
                     bearingVector_t br(cv_br.x,cv_br.y,cv_br.z);
                     mvBearingVecs.push_back(br);
 
                     //3D coordinates
+                    // 获取当前特征点的3D坐标
                     cv::Mat cv_pos = pMP -> GetWorldPos();
                     point_t pos(cv_pos.at<float>(0),cv_pos.at<float>(1),cv_pos.at<float>(2));
                     mvP3Dw.push_back(pos);
 
+                    // 记录当前特征点的索引值，挑选后的
                     mvKeyPointIndices.push_back(i);
+
+                    // 记录所有特征点的索引值
                     mvAllIndices.push_back(idx);
 
                     idx++;
@@ -96,57 +124,89 @@ namespace ORB_SLAM3 {
     }
 
     //RANSAC methods
+    /**
+     * @brief MLPnP迭代计算相机位姿
+     *
+     * @param[in] nIterations   迭代次数
+     * @param[in] bNoMore       达到最大迭代次数的标志
+     * @param[in] vbInliers     内点的标记
+     * @param[in] nInliers      总共内点数
+     * @return cv::Mat          计算出来的位姿
+     */
 	cv::Mat MLPnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers){
-		bNoMore = false;
-	    vbInliers.clear();
-	    nInliers=0;
-
+		bNoMore = false;        // 已经达到最大迭代次数的标志
+	    vbInliers.clear();      // 清除保存判断是否是内点的容器
+	    nInliers=0;             // 当前次迭代时的内点数
+        // N为所有2D点的个数, mRansacMinInliers为正常退出RANSAC迭代过程中最少的inlier数
+        // Step 1: 判断，如果2D点个数不足以启动RANSAC迭代过程的最小下限，则退出
 	    if(N<mRansacMinInliers)
 	    {
 	        bNoMore = true;
 	        return cv::Mat();
 	    }
 
+        // mvAllIndices为所有参与PnP的2D点的索引
+        // vAvailableIndices为每次从mvAllIndices中随机挑选mRansacMinSet组3D-2D对应点进行一次RANSAC
 	    vector<size_t> vAvailableIndices;
 
+        // 当前的迭代次数id
 	    int nCurrentIterations = 0;
+
+        // Step 2: 正常迭代计算进行相机位姿估计，如果满足效果上限，直接返回最佳估计结果，否则就继续利用最小集(6个点)估计位姿
+        // 进行迭代的条件:
+        // 条件1: 历史进行的迭代次数少于最大迭代值
+        // 条件2: 当前进行的迭代次数少于当前函数给定的最大迭代值
 	    while(mnIterations<mRansacMaxIts || nCurrentIterations<nIterations)
 	    {
+            // 迭代次数更新加1，直到达到最大迭代次数
 	        nCurrentIterations++;
 	        mnIterations++;
-
+            
+            // 清空已有的匹配点的计数,为新的一次迭代作准备
 	        vAvailableIndices = mvAllIndices;
 
             //Bearing vectors and 3D points used for this ransac iteration
+            // 初始化单位向量和3D点，给当前ransac迭代使用
             bearingVectors_t bearingVecs(mRansacMinSet);
             points_t p3DS(mRansacMinSet);
             vector<int> indexes(mRansacMinSet);
 
 	        // Get min set of points
+            // 选取最小集,从vAvailableIndices中选取mRansacMinSet个点进行操作，这里应该是6
 	        for(short i = 0; i < mRansacMinSet; ++i)
 	        {
+                // 在所有备选点中随机抽取一个，通过随机抽取索引数组vAvailableIndices的索引[randi]来实现
 	            int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
 
+                // vAvailableIndices[randi]才是备选点真正的索引值，randi是索引数组的索引值，不要搞混了
 	            int idx = vAvailableIndices[randi];
 
                 bearingVecs[i] = mvBearingVecs[idx];
                 p3DS[i] = mvP3Dw[idx];
                 indexes[i] = i;
-
+                
+                // 把抽取出来的点从所有备选点数组里删除掉，概率论中不放回的操作
 	            vAvailableIndices[randi] = vAvailableIndices.back();
 	            vAvailableIndices.pop_back();
-	        }
+	        }   // 选取最小集
 
             //By the moment, we are using MLPnP without covariance info
+            // 目前为止，还没有使用协方差的信息，所以这里生成一个size=1的值为0的协方差矩阵
+            //           |0 0 0|
+            // covs[0] = |0 0 0|
+            //           |0 0 0|
+            // ? 为什么不用协方差的SVD分解，计算耗时还是效果不明显？
             cov3_mats_t covs(1);
 
             //Result
             transformation_t result;
 
 	        // Compute camera pose
+            // 相机位姿估计，MLPnP最主要的操作在这里
             computePose(bearingVecs,p3DS,covs,indexes,result);
 
             //Save result
+            // 论文中12个待求值赋值保存在mRi中，每个求解器都有保存各自的计算结果
             mRi[0][0] = result(0,0);
             mRi[0][1] = result(0,1);
             mRi[0][2] = result(0,2);
@@ -162,15 +222,17 @@ namespace ORB_SLAM3 {
             mti[0] = result(0,3);mti[1] = result(1,3);mti[2] = result(2,3);
 
 	        // Check inliers
+            // 卡方检验内点，和EPnP基本类似
 	        CheckInliers();
 
 	        if(mnInliersi>=mRansacMinInliers)
 	        {
 	            // If it is the best solution so far, save it
+                // 如果该结果是目前内点数最多的，说明该结果是目前最好的，保存起来
 	            if(mnInliersi>mnBestInliers)
 	            {
-	                mvbBestInliers = mvbInliersi;
-	                mnBestInliers = mnInliersi;
+	                mvbBestInliers = mvbInliersi;       // 每个点是否是内点的标记
+	                mnBestInliers = mnInliersi;         // 内点个数
 
 	                cv::Mat Rcw(3,3,CV_64F,mRi);
 	                cv::Mat tcw(3,1,CV_64F,mti);
@@ -181,6 +243,7 @@ namespace ORB_SLAM3 {
 	                tcw.copyTo(mBestTcw.rowRange(0,3).col(3));
 	            }
 
+                // 用新的内点对相机位姿精求解，提高位姿估计精度，这里如果有足够内点的话，函数直接返回该值，不再继续计算
 	            if(Refine())
 	            {
 	                nInliers = mnRefinedInliers;
@@ -194,8 +257,11 @@ namespace ORB_SLAM3 {
 	            }
 
 	        }
-	    }
+	    } // 迭代
 
+        // Step 3: 选择最小集中效果最好的相机位姿估计结果,如果没有，只能用6个点去计算这个值了
+        // 程序运行到这里，说明Refine失败了，说明精求解过程中，内点的个数不满足最小阈值，那就只能在当前结果中选择内点数最多的那个最小集
+        // 但是也意味着这样子的结果最终是用6个点来求出来的，近似效果一般
 	    if(mnIterations>=mRansacMaxIts)
 	    {
 	        bNoMore=true;
@@ -215,18 +281,30 @@ namespace ORB_SLAM3 {
 	    return cv::Mat();
 	}
 
+    /**
+     * @brief 设置RANSAC迭代的参数
+     *
+     * @param[in] probability       模型最大概率值，默认0.9
+     * @param[in] minInliers        内点的最小阈值，默认8
+     * @param[in] maxIterations     最大迭代次数，默认300
+     * @param[in] minSet            最小集，每次采样六个点，即最小集应该设置为6，论文里面写着I > 5
+     * @param[in] epsilon           理论最少内点个数，这里是按照总数的比例计算，所以epsilon是比例，默认是0.4
+     * @param[in] th2               卡方检验阈值
+     *
+     */
 	void MLPnPsolver::SetRansacParameters(double probability, int minInliers, int maxIterations, int minSet, float epsilon, float th2){
-		mRansacProb = probability;
-	    mRansacMinInliers = minInliers;
-	    mRansacMaxIts = maxIterations;
-	    mRansacEpsilon = epsilon;
-	    mRansacMinSet = minSet;
+		mRansacProb = probability;             // 模型最大概率值，默认0.9
+	    mRansacMinInliers = minInliers;        // 内点的最小阈值，默认8
+	    mRansacMaxIts = maxIterations;         // 最大迭代次数，默认300
+	    mRansacEpsilon = epsilon;              // 理论最少内点个数，这里是按照总数的比例计算，所以epsilon是比例，默认是0.4
+	    mRansacMinSet = minSet;                // 每次采样六个点，即最小集应该设置为6，论文里面写着I > 5
 
-	    N = mvP2D.size(); // number of correspondences
+	    N = mvP2D.size();                      // number of correspondences
 
-	    mvbInliersi.resize(N);
+	    mvbInliersi.resize(N);                 // 是否是内点的标记位
 
 	    // Adjust Parameters according to number of correspondences
+        // 计算最少个数点，选择(给定内点数, 最小集, 理论内点数)的最小值
 	    int nMinInliers = N*mRansacEpsilon;
 	    if(nMinInliers<mRansacMinInliers)
 	        nMinInliers=mRansacMinInliers;
@@ -234,10 +312,12 @@ namespace ORB_SLAM3 {
 	        nMinInliers=minSet;
 	    mRansacMinInliers = nMinInliers;
 
+        // 根据最终得到的"最小内点数"来调整 内点数/总体数 比例epsilon
 	    if(mRansacEpsilon<(float)mRansacMinInliers/N)
 	        mRansacEpsilon=(float)mRansacMinInliers/N;
 
 	    // Set RANSAC iterations according to probability, epsilon, and max iterations
+        // 根据给出的各种参数计算RANSAC的理论迭代次数,并且敲定最终在迭代过程中使用的RANSAC最大迭代次数
 	    int nIterations;
 
 	    if(mRansacMinInliers==N)
@@ -247,6 +327,7 @@ namespace ORB_SLAM3 {
 
 	    mRansacMaxIts = max(1,min(nIterations,mRansacMaxIts));
 
+        // 计算不同图层上的特征点在进行内点检验的时候,所使用的不同判断误差阈值
 	    mvMaxError.resize(mvSigma2.size());
 	    for(size_t i=0; i<mvSigma2.size(); i++)
 	        mvMaxError[i] = mvSigma2[i]*th2;
@@ -342,55 +423,124 @@ namespace ORB_SLAM3 {
     }
 
 	//MLPnP methods
+    /**
+     * @brief MLPnP相机位姿估计
+     *
+     * @param[in] f             单位向量
+     * @param[in] p             点的3D坐标
+     * @param[in] covMats       协方差矩阵
+     * @param[in] indices       对应点的索引值
+     * @param[in] result        相机位姿估计结果
+     *
+     */
     void MLPnPsolver::computePose(const bearingVectors_t &f, const points_t &p, const cov3_mats_t &covMats,
                                   const std::vector<int> &indices, transformation_t &result) {
+        // Step 1: 判断点的数量是否满足计算条件，否则直接报错
+        // 因为每个观测值会产生2个残差，所以至少需要6个点来计算公式12，所以要检验当前的点个数是否满足大于5的条件
         size_t numberCorrespondences = indices.size();
+        // 当numberCorrespondences不满足>5的条件时会发生错误(如果小于6根本进不来)
         assert(numberCorrespondences > 5);
 
+        // ? 用来标记是否满足平面条件，（平面情况下矩阵有相关性，秩为2，矩阵形式可以简化，但需要跟多的约束求解）
         bool planar = false;
         // compute the nullspace of all vectors
+
+        // compute the nullspace of all vectors
+        // step 2: 计算点的单位（方向向量）向量的零空间
+        // 利用公式7 Jvr(v) = null(v^T) = [r s]
+
+        // 给每个向量都开辟一个零空间，所以数量相等
         std::vector<Eigen::MatrixXd> nullspaces(numberCorrespondences);
+
+        // 存储世界坐标系下空间点的矩阵，3行N列，N是numberCorrespondences，即点的总个数
+        //           |x1, x2,      xn|
+        // points3 = |y1, y2, ..., yn|
+        //           |z1, z2,      zn|
         Eigen::MatrixXd points3(3, numberCorrespondences);
+
+        // 空间点向量
+        //            |xi|
+        // points3v = |yi|
+        //            |zi|
         points_t points3v(numberCorrespondences);
+        
+        // 单个空间点的齐次坐标矩阵，TODO:没用到啊
+        //            |xi|
+        // points4v = |yi|
+        //            |zi|
+        //            |1 |
         points4_t points4v(numberCorrespondences);
+
+        // numberCorrespondences不等于所有点，而是提取出来的内点的数量，其作为连续索引值对indices进行索引
+        // 因为内点的索引并非连续，想要方便遍历，必须用连续的索引值，
+        // 所以就用了indices[i]嵌套形式，i表示内点数量numberCorrespondences范围内的连续形式
+        // indices里面保存的是不连续的内点的索引值
         for (size_t i = 0; i < numberCorrespondences; i++) {
+            // 当前空间点的单位向量,indices[i]是当前点坐标和向量的索引值，
             bearingVector_t f_current = f[indices[i]];
+
+            // 取出当前点记录到 points3 空间点矩阵里
             points3.col(i) = p[indices[i]];
+
             // nullspace of right vector
+            // 求解方程 Jvr(v) = null(v^T) = [r s]
+            // A = U * S * V^T
+            // 这里只求解了V的完全解，没有求解U
             Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::HouseholderQRPreconditioner>
                     svd_f(f_current.transpose(), Eigen::ComputeFullV);
+
+            // 取特征值最小的那两个对应的2个特征向量
+            //              |r1 s1|
+            // nullspaces = |r2 s2|
+            //              |r3 s3|
             nullspaces[i] = svd_f.matrixV().block(0, 1, 3, 2);
+            // 取出当前点记录到 points3v 空间点向量
             points3v[i] = p[indices[i]];
         }
-
+        // Step 3: 通过计算S的秩来判断是在平面情况还是在正常情况
+        // 令S = M * M^T，其中M = [p1,p2,...,pi]，即 points3 空间点矩阵
         //////////////////////////////////////
         // 1. test if we have a planar scene
+        // 在平面条件下，会产生4个解，因此需要另外判断和解决平面条件下的问题
         //////////////////////////////////////
 
+        // 令S = M * M^T，其中M = [p1,p2,...,pi]，即 points3 空间点矩阵
+        // 如果矩阵S的秩为3且最小特征值不接近于0，则不属于平面条件，否则需要解决一下
         Eigen::Matrix3d planarTest = points3 * points3.transpose();
         Eigen::FullPivHouseholderQR<Eigen::Matrix3d> rankTest(planarTest);
         //int r, c;
         //double minEigenVal = abs(eigen_solver.eigenvalues().real().minCoeff(&r, &c));
+        // 特征旋转矩阵，用在平面条件下的计算
         Eigen::Matrix3d eigenRot;
         eigenRot.setIdentity();
 
         // if yes -> transform points to new eigen frame
         //if (minEigenVal < 1e-3 || minEigenVal == 0.0)
         //rankTest.setThreshold(1e-10);
+        // 当矩阵S的秩为2时，属于平面条件，
         if (rankTest.rank() == 2) {
             planar = true;
             // self adjoint is faster and more accurate than general eigen solvers
             // also has closed form solution for 3x3 self-adjoint matrices
             // in addition this solver sorts the eigenvalues in increasing order
+            // 计算矩阵S的特征值和特征向量
             Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigen_solver(planarTest);
+
+            // 得到QR分解的结果
             eigenRot = eigen_solver.eigenvectors().real();
+
+            // 把eigenRot变成其转置矩阵，即论文公式20的系数 R_S^T
             eigenRot.transposeInPlace();
+
+            // 公式20： pi' = R_S^T * pi
             for (size_t i = 0; i < numberCorrespondences; i++)
                 points3.col(i) = eigenRot * points3.col(i);
         }
         //////////////////////////////////////
         // 2. stochastic model
         //////////////////////////////////////
+        // Step 4: 计算随机模型中的协方差矩阵
+        // 但是作者并没有用到协方差信息
         Eigen::SparseMatrix<double> P(2 * numberCorrespondences,
                                       2 * numberCorrespondences);
         bool use_cov = false;
@@ -398,6 +548,8 @@ namespace ORB_SLAM3 {
 
         // if we do have covariance information
         // -> fill covariance matrix
+        // 如果协方差矩阵的个数等于空间点的个数，说明前面已经计算好了，表示有协方差信息
+        // 目前版本是没有用到协方差信息的，所以调用本函数前就把协方差矩阵个数置为1了
         if (covMats.size() == numberCorrespondences) {
             use_cov = true;
             int l = 0;
@@ -413,12 +565,22 @@ namespace ORB_SLAM3 {
             }
         }
 
+        // Step 5: 构造矩阵A来完成线性方程组的构建
         //////////////////////////////////////
         // 3. fill the design matrix A
         //////////////////////////////////////
+        // 公式12，设矩阵A，则有 Au = 0
+        // u = [r11, r12, r13, r21, r22, r23, r31, r32, r33, t1, t2, t3]^T
+        // 对单位向量v的2个零空间向量做微分，所以有[dr, ds]^T，一个点有2行，N个点就有2*N行
         const int rowsA = 2 * numberCorrespondences;
+
+        // 对应上面u的列数，因为旋转矩阵有9个元素，加上平移矩阵3个元素，总共12个元素
         int colsA = 12;
         Eigen::MatrixXd A;
+
+        // 如果世界点位于分别跨2个坐标轴的平面上，即所有世界点的一个元素是常数的时候，可简单地忽略矩阵A中对应的列
+        // 而且这不影响问题的结构本身，所以在计算公式20： pi' = R_S^T * pi的时候，忽略了r11,r21,r31，即第一列
+        // 对应的u只有9个元素 u = [r12, r13, r22, r23, r32, r33, t1, t2, t3]^T 所以A的列个数是9个
         if (planar) {
             colsA = 9;
             A = Eigen::MatrixXd(rowsA, 9);
@@ -427,35 +589,37 @@ namespace ORB_SLAM3 {
         A.setZero();
 
         // fill design matrix
+        // 构造矩阵A，分平面和非平面2种情况
         if (planar) {
             for (size_t i = 0; i < numberCorrespondences; ++i) {
+                // 列表示当前点的坐标
                 point_t pt3_current = points3.col(i);
 
-                // r12
+                // r12    r12 的系数 r1*py 和 s1*py
                 A(2 * i, 0) = nullspaces[i](0, 0) * pt3_current[1];
                 A(2 * i + 1, 0) = nullspaces[i](0, 1) * pt3_current[1];
-                // r13
+                // r13    r13 的系数 r1*pz 和 s1*pz
                 A(2 * i, 1) = nullspaces[i](0, 0) * pt3_current[2];
                 A(2 * i + 1, 1) = nullspaces[i](0, 1) * pt3_current[2];
-                // r22
+                // r22    r22 的系数 r2*py 和 s2*py
                 A(2 * i, 2) = nullspaces[i](1, 0) * pt3_current[1];
                 A(2 * i + 1, 2) = nullspaces[i](1, 1) * pt3_current[1];
-                // r23
+                // r23    r23 的系数 r2*pz 和 s2*pz
                 A(2 * i, 3) = nullspaces[i](1, 0) * pt3_current[2];
                 A(2 * i + 1, 3) = nullspaces[i](1, 1) * pt3_current[2];
-                // r32
+                // r32    r32 的系数 r3*py 和 s3*py
                 A(2 * i, 4) = nullspaces[i](2, 0) * pt3_current[1];
                 A(2 * i + 1, 4) = nullspaces[i](2, 1) * pt3_current[1];
-                // r33
+                // r33    r33 的系数 r3*pz 和 s3*pz
                 A(2 * i, 5) = nullspaces[i](2, 0) * pt3_current[2];
                 A(2 * i + 1, 5) = nullspaces[i](2, 1) * pt3_current[2];
-                // t1
+                // t1     t1 的系数 r1 和 s1
                 A(2 * i, 6) = nullspaces[i](0, 0);
                 A(2 * i + 1, 6) = nullspaces[i](0, 1);
-                // t2
+                // t2     t2 的系数 r2 和 s2
                 A(2 * i, 7) = nullspaces[i](1, 0);
                 A(2 * i + 1, 7) = nullspaces[i](1, 1);
-                // t3
+                // t3     t3 的系数 r3 和 s3
                 A(2 * i, 8) = nullspaces[i](2, 0);
                 A(2 * i + 1, 8) = nullspaces[i](2, 1);
             }
@@ -463,6 +627,7 @@ namespace ORB_SLAM3 {
             for (size_t i = 0; i < numberCorrespondences; ++i) {
                 point_t pt3_current = points3.col(i);
 
+                // 不是平面的情况下，三个列向量都保留求解
                 // r11
                 A(2 * i, 0) = nullspaces[i](0, 0) * pt3_current[0];
                 A(2 * i + 1, 0) = nullspaces[i](0, 1) * pt3_current[0];
@@ -502,18 +667,26 @@ namespace ORB_SLAM3 {
             }
         }
 
+        // Step 6: 计算线性方程组的最小二乘解
         //////////////////////////////////////
         // 4. solve least squares
         //////////////////////////////////////
+        // 求解方程的最小二乘解
         Eigen::MatrixXd AtPA;
         if (use_cov)
+            // 有协方差信息的情况下，一般方程是 A^T*P*A*u = N*u = 0
             AtPA = A.transpose() * P * A; // setting up the full normal equations seems to be unstable
         else
+            // 无协方差信息的情况下，一般方程是 A^T*A*u = N*u = 0
             AtPA = A.transpose() * A;
 
+        // SVD分解，满秩求解V
         Eigen::JacobiSVD<Eigen::MatrixXd> svd_A(AtPA, Eigen::ComputeFullV);
+
+        // 解就是对应奇异值最小的列向量，即最后一列
         Eigen::MatrixXd result1 = svd_A.matrixV().col(colsA - 1);
 
+        // Step 7: 根据平面和非平面情况下选择最终位姿解
         ////////////////////////////////
         // now we treat the results differently,
         // depending on the scene (planar or not)
@@ -526,30 +699,67 @@ namespace ORB_SLAM3 {
             rotation_t tmp;
             // until now, we only estimated
             // row one and two of the transposed rotation matrix
+            // 暂时只估计了旋转矩阵的第1行和第2行，先记录到tmp中
             tmp << 0.0, result1(0, 0), result1(1, 0),
                     0.0, result1(2, 0), result1(3, 0),
                     0.0, result1(4, 0), result1(5, 0);
             //double scale = 1 / sqrt(tmp.col(1).norm() * tmp.col(2).norm());
-            // row 3
+            // row 3 
+            // 第3行等于第1行和第2行的叉积（这里应该是列，后面转置后成了行）
             tmp.col(0) = tmp.col(1).cross(tmp.col(2));
+
+            // 原来是:
+            //       |r11 r12 r13|
+            // tmp = |r21 r22 r23|
+            //       |r31 r32 r33|
+            // 转置变成:
+            //       |r11 r21 r31|
+            // tmp = |r12 r22 r32|
+            //       |r13 r23 r33|
             tmp.transposeInPlace();
 
+            
             double scale = 1.0 / std::sqrt(std::abs(tmp.col(1).norm() * tmp.col(2).norm()));
             // find best rotation matrix in frobenius sense
+            // 利用Frobenious范数计算最佳的旋转矩阵，利用公式(19)， R = U_R*V_R^T
+            // 本质上，采用矩阵，将其元素平方，将它们加在一起并对结果平方根。计算得出的数字是矩阵的Frobenious范数
+            // 由于列向量是单列矩阵，行向量是单行矩阵，所以这些矩阵的Frobenius范数等于向量的长度（L）
             Eigen::JacobiSVD<Eigen::MatrixXd> svd_R_frob(tmp, Eigen::ComputeFullU | Eigen::ComputeFullV);
+
             rotation_t Rout1 = svd_R_frob.matrixU() * svd_R_frob.matrixV().transpose();
+
             // test if we found a good rotation matrix
+            // 如果估计出来的旋转矩阵的行列式小于0，则乘以-1（EPnP也是同样的操作）
             if (Rout1.determinant() < 0)
                 Rout1 *= -1.0;
+
             // rotate this matrix back using the eigen frame
+            // ? 因为是在平面情况下计算的，估计出来的旋转矩阵是要做一个转换的，根据公式(21)，R = Rs*R
+            // 其中，Rs表示特征向量的旋转矩阵
+            // 注意eigenRot之前已经转置过了transposeInPlace()，所以这里Rout1在之前也转置了，即tmp.transposeInPlace()
             Rout1 = eigenRot.transpose() * Rout1;
 
+            // 估计最终的平移矩阵，带尺度信息的，根据公式(17)，t = t^ / three-party(||r1||*||r2||*||r3||)
+            // 这里是 t = t^ / sqrt(||r1||*||r2||)
             translation_t t = scale * translation_t(result1(6, 0), result1(7, 0), result1(8, 0));
+
+            // 把之前转置过来的矩阵再转回去，变成公式里面的形态:
+            //         |r11 r12 r13|
+            // Rout1 = |r21 r22 r23|
+            //         |r31 r32 r33|
             Rout1.transposeInPlace();
+
+            // 这里乘以-1是为了计算4种结果
             Rout1 *= -1;
             if (Rout1.determinant() < 0.0)
                 Rout1.col(2) *= -1;
             // now we have to find the best out of 4 combinations
+            //         |r11 r12 r13|
+            //    R1 = |r21 r22 r23|
+            //         |r31 r32 r33|
+            //         |-r11 -r12 -r13|
+            //    R2 = |-r21 -r22 -r23|
+            //         |-r31 -r32 -r33|
             rotation_t R1, R2;
             R1.col(0) = Rout1.col(0);
             R1.col(1) = Rout1.col(1);
@@ -558,6 +768,10 @@ namespace ORB_SLAM3 {
             R2.col(1) = -Rout1.col(1);
             R2.col(2) = Rout1.col(2);
 
+            //      |R1  t|
+            // Ts = |R1 -t|
+            //      |R2  t|
+            //      |R2 -t|
             vector<transformation_t, Eigen::aligned_allocator<transformation_t>> Ts(4);
             Ts[0].block<3, 3>(0, 0) = R1;
             Ts[0].block<3, 1>(0, 3) = t;
@@ -568,59 +782,124 @@ namespace ORB_SLAM3 {
             Ts[3].block<3, 3>(0, 0) = R2;
             Ts[3].block<3, 1>(0, 3) = -t;
 
+            // 遍历4种解
             vector<double> normVal(4);
             for (int i = 0; i < 4; ++i) {
                 point_t reproPt;
                 double norms = 0.0;
+                // 计算世界点p到切线空间v的投影的残差，对应最小的就是最好的解
+                // 用前6个点来验证4种解的残差
                 for (int p = 0; p < 6; ++p) {
+                    // 重投影的向量
                     reproPt = Ts[i].block<3, 3>(0, 0) * points3v[p] + Ts[i].block<3, 1>(0, 3);
+                    // 变成单位向量
                     reproPt = reproPt / reproPt.norm();
+                    // f[indices[p]] 是当前空间点的单位向量
+                    // 利用欧氏距离来表示重投影向量(观测)和当前空间点向量(实际)的偏差
+                    // 即两个n维向量a(x11,x12,…,x1n)与 b(x21,x22,…,x2n)间的欧氏距离
                     norms += (1.0 - reproPt.transpose() * f[indices[p]]);
                 }
+                // 统计每种解的误差和，第i个解的误差和放入对应的变量normVal[i]
                 normVal[i] = norms;
             }
+
+            // 搜索容器中的最小值，并返回该值对应的指针
             std::vector<double>::iterator
                     findMinRepro = std::min_element(std::begin(normVal), std::end(normVal));
+
+            // 计算容器头指针到最小值指针的距离，即可作为该最小值的索引值
             int idx = std::distance(std::begin(normVal), findMinRepro);
+
+            // 得到最终相机位姿估计的结果
             Rout = Ts[idx].block<3, 3>(0, 0);
             tout = Ts[idx].block<3, 1>(0, 3);
         } else // non-planar
         {
             rotation_t tmp;
+            // 从AtPA的SVD分解中得到旋转矩阵，先存下来
+            // 注意这里的顺序是和公式16不同的
+            //       |r11 r21 r31|
+            // tmp = |r12 r22 r32|
+            //       |r13 r23 r33|
             tmp << result1(0, 0), result1(3, 0), result1(6, 0),
                     result1(1, 0), result1(4, 0), result1(7, 0),
                     result1(2, 0), result1(5, 0), result1(8, 0);
             // get the scale
+            // 计算尺度，根据公式(17)，t = t^ / three-party(||r1||*||r2||*||r3||)
             double scale = 1.0 /
                            std::pow(std::abs(tmp.col(0).norm() * tmp.col(1).norm() * tmp.col(2).norm()), 1.0 / 3.0);
+
             //double scale = 1.0 / std::sqrt(std::abs(tmp.col(0).norm() * tmp.col(1).norm()));
             // find best rotation matrix in frobenius sense
+            // 利用Frobenious范数计算最佳的旋转矩阵，利用公式(19)， R = U_R*V_R^T
             Eigen::JacobiSVD<Eigen::MatrixXd> svd_R_frob(tmp, Eigen::ComputeFullU | Eigen::ComputeFullV);
             Rout = svd_R_frob.matrixU() * svd_R_frob.matrixV().transpose();
+
             // test if we found a good rotation matrix
+            // 如果估计出来的旋转矩阵的行列式小于0，则乘以-1
             if (Rout.determinant() < 0)
                 Rout *= -1.0;
+
             // scale translation
+            // 从相机坐标系到世界坐标系的转换关系是 lambda*v = R*pi+t
+            // 从世界坐标系到相机坐标系的转换关系是 pi = R^T*v-R^Tt
+            // 旋转矩阵的性质 R^-1 = R^T
+            // 所以，在下面的计算中，需要计算从世界坐标系到相机坐标系的转换，这里tout = -R^T*t，下面再计算前半部分R^T*v
+            // 先恢复平移部分的尺度再计算
             tout = Rout * (scale * translation_t(result1(9, 0), result1(10, 0), result1(11, 0)));
 
             // find correct direction in terms of reprojection error, just take the first 6 correspondences
+            // 非平面情况下，一共有2种解，R,t和R,-t
+            // 利用前6个点计算重投影误差，选择残差最小的一个解
             vector<double> error(2);
             vector<Eigen::Matrix4d, Eigen::aligned_allocator<Eigen::Matrix4d>> Ts(2);
             for (int s = 0; s < 2; ++s) {
+                // 初始化error的值为0
                 error[s] = 0.0;
+
+                //         |1 0 0 0|
+                // Ts[s] = |0 1 0 0|
+                //         |0 0 1 0|
+                //         |0 0 0 1|
                 Ts[s] = Eigen::Matrix4d::Identity();
+
+                //         |.   .  . 0|
+                // Ts[s] = |. Rout . 0|
+                //         |.   .  . 0|
+                //         |0   0  0 1|
                 Ts[s].block<3, 3>(0, 0) = Rout;
                 if (s == 0)
+                    //         |.   .  .  .  |
+                    // Ts[s] = |. Rout . tout|
+                    //         |.   .  .  .  |
+                    //         |0   0  0  1  |
                     Ts[s].block<3, 1>(0, 3) = tout;
                 else
+                    //         |.   .  .   .  |
+                    // Ts[s] = |. Rout . -tout|
+                    //         |.   .  .   .  |
+                    //         |0   0  0   1  |
                     Ts[s].block<3, 1>(0, 3) = -tout;
+
+                // 为了避免Eigen中aliasing的问题，后面在计算矩阵的逆的时候，需要添加eval()条件
+                // a = a.transpose(); //error: aliasing
+                // a = a.transpose().eval(); //ok
+                // a.transposeInPlace(); //ok
+                // Eigen中aliasing指的是在赋值表达式的左右两边存在矩阵的重叠区域，这种情况下，有可能得到非预期的结果。
+                // 如mat = 2*mat或者mat = mat.transpose()，第一个例子中的alias是没有问题的，而第二的例子则会导致非预期的计算结果。
                 Ts[s] = Ts[s].inverse().eval();
                 for (int p = 0; p < 6; ++p) {
+                    // 从世界坐标系到相机坐标系的转换关系是 pi = R^T*v-R^Tt
+                    // Ts[s].block<3, 3>(0, 0) * points3v[p] =  Rout   = R^T*v
+                    // Ts[s].block<3, 1>(0, 3)               =  tout   = -R^Tt
                     bearingVector_t v = Ts[s].block<3, 3>(0, 0) * points3v[p] + Ts[s].block<3, 1>(0, 3);
+                    // 变成单位向量
                     v = v / v.norm();
+                    // 计算重投影向量(观测)和当前空间点向量(实际)的偏差
                     error[s] += (1.0 - v.transpose() * f[indices[p]]);
                 }
             }
+            // 选择残差最小的解作为最终解
             if (error[0] < error[1])
                 tout = Ts[0].block<3, 1>(0, 3);
             else
@@ -629,10 +908,18 @@ namespace ORB_SLAM3 {
 
         }
 
+        // Step 8: 利用高斯牛顿法对位姿进行精确求解，提高位姿解的精度
         //////////////////////////////////////
         // 5. gauss newton
         //////////////////////////////////////
+        // 求解非线性方程之前，需要得到罗德里格斯参数，来表达李群(SO3) -> 李代数(so3)的对数映射
         rodrigues_t omega = rot2rodrigues(Rout);
+        //        |r1|
+        //        |r2|
+        // minx = |r3|
+        //        |t1|
+        //        |t2|
+        //        |t3|
         Eigen::VectorXd minx(6);
         minx[0] = omega[0];
         minx[1] = omega[1];
@@ -641,11 +928,15 @@ namespace ORB_SLAM3 {
         minx[4] = tout[1];
         minx[5] = tout[2];
 
+        // 利用高斯牛顿迭代法来提炼相机位姿 pose
         mlpnp_gn(minx, points3v, nullspaces, P, use_cov);
 
+        // 最终输出的结果
         Rout = rodrigues2rot(rodrigues_t(minx[0], minx[1], minx[2]));
         tout = translation_t(minx[3], minx[4], minx[5]);
+
         // result inverse as opengv uses this convention
+        // 这里是用来计算世界坐标系到相机坐标系的转换，所以是Pc=R^T*Pw-R^T*t，反变换
         result.block<3, 3>(0, 0) = Rout;//Rout.transpose();
         result.block<3, 1>(0, 3) = tout;//-result.block<3, 3>(0, 0) * tout;
     }
@@ -684,11 +975,25 @@ namespace ORB_SLAM3 {
         return omega;
     }
 
+
+    /**
+     * @brief MLPnP的高斯牛顿解法
+     * @param[in]  x                未知量矩阵
+     * @param[in]  pts              3D点矩阵
+     * @param[in]  nullspaces       零空间向量
+     * @param[in]  Kll              协方差矩阵
+     * @param[in]  use_cov          协方差方法使用标记位
+     */
     void MLPnPsolver::mlpnp_gn(Eigen::VectorXd &x, const points_t &pts, const std::vector<Eigen::MatrixXd> &nullspaces,
                                const Eigen::SparseMatrix<double> Kll, bool use_cov) {
+        // 计算观测值数量
         const int numObservations = pts.size();
+
+        // 未知量是旋转向量和平移向量，即R和t，总共6个未知参数
         const int numUnknowns = 6;
+
         // check redundancy
+        // 检查观测数量是否满足计算条件，因为每个观测值都提供了2个约束，即r和s，所以这里乘以2
         assert((2 * numObservations - numUnknowns) > 0);
 
         // =============
@@ -751,6 +1056,15 @@ namespace ORB_SLAM3 {
         // result
     }
 
+    /**
+     * @brief 计算Jacobian矩阵和残差
+     * @param[in]  x                未知量矩阵
+     * @param[in]  pts              3D点矩阵
+     * @param[in]  nullspaces       零空间向量
+     * @param[in]  r                f(x)函数
+     * @param[out] fjac             f(x)函数的Jacobian矩阵
+     * @param[in]  getJacs          是否可以得到Jacobian矩阵标记位
+     */
     void MLPnPsolver::mlpnp_residuals_and_jacs(const Eigen::VectorXd &x, const points_t &pts,
                                                const std::vector<Eigen::MatrixXd> &nullspaces, Eigen::VectorXd &r,
                                                Eigen::MatrixXd &fjac, bool getJacs) {
@@ -800,6 +1114,15 @@ namespace ORB_SLAM3 {
         }
     }
 
+    /**
+     * @brief 计算Jacobian矩阵
+     * @param[in]  pt               3D点矩阵
+     * @param[in]  nullspace_r      零空间向量r
+     * @param[in]  nullspace_r      零空间向量s
+     * @param[in]  w                旋转向量w
+     * @param[in]  t                平移向量t
+     * @param[out] jacs             Jacobian矩阵
+     */
     void MLPnPsolver::mlpnpJacs(const point_t& pt, const Eigen::Vector3d& nullspace_r,
             					const Eigen::Vector3d& nullspace_s, const rodrigues_t& w,
             					const translation_t& t, Eigen::MatrixXd& jacs){
