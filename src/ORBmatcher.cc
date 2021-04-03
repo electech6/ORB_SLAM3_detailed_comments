@@ -303,9 +303,17 @@ bool ORBmatcher::CheckDistEpipolarLine2(const cv::KeyPoint &kp1, const cv::KeyPo
         return dsqr<3.84*pKF2->mvLevelSigma2[kp2.octave]*unc;
 }
 
+/**
+ * @brief 通过词袋，对关键帧的特征点进行跟踪
+ * 
+ * @param[in] pKF               关键帧
+ * @param[in] F                 当前普通帧
+ * @param[in] vpMapPointMatches F中地图点对应的匹配，NULL表示未匹配
+ * @return int                  成功匹配的数量
+ */
 int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)
 {
-    // 获取该关键帧的mappoint
+    // 获取该关键帧的地图点
     const vector<MapPoint*> vpMapPointsKF = pKF->GetMapPointMatches();
 
     // 和普通帧F特征点的索引一致
@@ -348,7 +356,7 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
                 // 关键帧该节点中特征点的索引
                 const unsigned int realIdxKF = vIndicesKF[iKF];
 
-                // 取出KF中该特征对应的MapPoint
+                // 取出KF中该特征对应的地图点
                 MapPoint* pMP = vpMapPointsKF[realIdxKF]; 
 
                 if(!pMP)
@@ -356,8 +364,8 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
 
                 if(pMP->isBad())
                     continue;
-
-                const cv::Mat &dKF= pKF->mDescriptors.row(realIdxKF); // 取出KF中该特征对应的描述子
+                // 取出关键帧KF中该特征对应的描述子
+                const cv::Mat &dKF= pKF->mDescriptors.row(realIdxKF); 
 
                 int bestDist1=256; // 最好的距离（最小距离）
                 int bestIdxF =-1 ;
@@ -370,13 +378,14 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
                 for(size_t iF=0; iF<vIndicesF.size(); iF++)
                 {
                     if(F.Nleft == -1){
+                        // 这里的realIdxF是指普通帧该节点中特征点的索引
                         const unsigned int realIdxF = vIndicesF[iF];
 
 	                    // 如果地图点存在，说明这个点已经被匹配过了，不再匹配，加快速度
 	                    if(vpMapPointMatches[realIdxF])
 	                        continue;
-
-	                    const cv::Mat &dF = F.mDescriptors.row(realIdxF); // 取出F中该特征对应的描述子
+                        // 取出普通帧F中该特征对应的描述子
+	                    const cv::Mat &dF = F.mDescriptors.row(realIdxF); 
 	                    // 计算描述子的距离
 	                    const int dist =  DescriptorDistance(dKF,dF); 
 
