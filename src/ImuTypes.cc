@@ -31,7 +31,6 @@ cv::Mat NormalizeRotation(const cv::Mat &R)
 {
     cv::Mat U,w,Vt;
     cv::SVDecomp(R,w,U,Vt,cv::SVD::FULL_UV);
-    // assert(cv::determinant(U*Vt)>0);
     return U*Vt;
 }
 
@@ -399,10 +398,10 @@ IMU::Bias Preintegrated::GetDeltaBias(const Bias &b_)
 cv::Mat Preintegrated::GetDeltaRotation(const Bias &b_)
 {
     std::unique_lock<std::mutex> lock(mMutex);
-    // ? 计算偏置的变化量
+    // 计算偏置的变化量
     cv::Mat dbg = (cv::Mat_<float>(3,1) << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
-    // ? 考虑偏置后，dR对偏置线性化的近似求解,邱笑晨《预积分总结与公式推导》P13～P14
-    // ? Forster论文公式（44）yP17也有结果（但没有推导），后面两个函数GetDeltaPosition和GetDeltaPosition也是基于此推导的
+    // 考虑偏置后，dR对偏置线性化的近似求解,邱笑晨《预积分总结与公式推导》P13～P14
+    // Forster论文公式（44）yP17也有结果（但没有推导），后面两个函数GetDeltaPosition和GetDeltaPosition也是基于此推导的
     return NormalizeRotation(dR*ExpSO3(JRg*dbg));
 }
 
@@ -411,7 +410,7 @@ cv::Mat Preintegrated::GetDeltaVelocity(const Bias &b_)
     std::unique_lock<std::mutex> lock(mMutex);
     cv::Mat dbg = (cv::Mat_<float>(3,1) << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
     cv::Mat dba = (cv::Mat_<float>(3,1) << b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz);
-    // ? 考虑偏置后，dV对偏置线性化的近似求解,邱笑晨《预积分总结与公式推导》P13，JPg和JPa在预积分处理中更新 
+    // 考虑偏置后，dV对偏置线性化的近似求解,邱笑晨《预积分总结与公式推导》P13，JPg和JPa在预积分处理中更新 
     return dV + JVg*dbg + JVa*dba;
 }
 
@@ -420,7 +419,7 @@ cv::Mat Preintegrated::GetDeltaPosition(const Bias &b_)
     std::unique_lock<std::mutex> lock(mMutex);
     cv::Mat dbg = (cv::Mat_<float>(3,1) << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
     cv::Mat dba = (cv::Mat_<float>(3,1) << b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz);
-    // ? 考虑偏置后，dP对偏置线性化的近似求解,邱笑晨《预积分总结与公式推导》P13，JPg和JPa在预积分处理中更新
+    // 考虑偏置后，dP对偏置线性化的近似求解,邱笑晨《预积分总结与公式推导》P13，JPg和JPa在预积分处理中更新
     return dP + JPg*dbg + JPa*dba;
 }
 

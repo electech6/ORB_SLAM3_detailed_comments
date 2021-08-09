@@ -1333,13 +1333,7 @@ int TemplatedVocabulary<TDescriptor,F>::stopWords(double minWeight)
 }
 
 // --------------------------------------------------------------------------
-/**
- * @brief 读取TXT格式的预训练好的ORB字典
- * 
- * @param[in] filename    文件名
- * @return true           读取成功
- * @return false          读取失败
- */
+
 template<class TDescriptor, class F>
 bool TemplatedVocabulary<TDescriptor,F>::loadFromTextFile(const std::string &filename)
 {
@@ -1347,7 +1341,7 @@ bool TemplatedVocabulary<TDescriptor,F>::loadFromTextFile(const std::string &fil
     f.open(filename.c_str());
 	
     if(f.eof())
-	      return false;
+	return false;
 
     m_words.clear();
     m_nodes.clear();
@@ -1356,8 +1350,8 @@ bool TemplatedVocabulary<TDescriptor,F>::loadFromTextFile(const std::string &fil
     getline(f,s);
     stringstream ss;
     ss << s;
-    ss >> m_k;  // 树的分支数目
-    ss >> m_L;  // 树的深度
+    ss >> m_k;
+    ss >> m_L;
     int n1, n2;
     ss >> n1;
     ss >> n2;
@@ -1365,22 +1359,20 @@ bool TemplatedVocabulary<TDescriptor,F>::loadFromTextFile(const std::string &fil
     if(m_k<0 || m_k>20 || m_L<1 || m_L>10 || n1<0 || n1>5 || n2<0 || n2>3)
     {
         std::cerr << "Vocabulary loading failure: This is not a correct text file!" << endl;
-	      return false;
+	return false;
     }
     
-    m_scoring = (ScoringType)n1;      // 评分类型
-    m_weighting = (WeightingType)n2;  // 权重类型
+    m_scoring = (ScoringType)n1;
+    m_weighting = (WeightingType)n2;
     createScoringObject();
 
-    // 总共节点（nodes）数，是一个等比数列求和
-    //! bug 没有包含最后叶子节点数，应该改为 ((pow((double)m_k, (double)m_L + 2) - 1)/(m_k - 1))
-    //! 但是没有影响，因为这里只是reserve，实际存储是一步步resize实现
+    // nodes
     int expected_nodes =
     (int)((pow((double)m_k, (double)m_L + 1) - 1)/(m_k - 1));
     m_nodes.reserve(expected_nodes);
-    // 预分配空间给 单词（叶子）数
+
     m_words.reserve(pow((double)m_k, (double)m_L + 1));
-    // 第一个节点是根节点，id设为0
+
     m_nodes.resize(1);
     m_nodes[0].id = 0;
     while(!f.eof())
@@ -1389,53 +1381,40 @@ bool TemplatedVocabulary<TDescriptor,F>::loadFromTextFile(const std::string &fil
         getline(f,snode);
         stringstream ssnode;
         ssnode << snode;
-        // nid 表示当前节点id，实际是读取顺序，从0开始
-        int nid = m_nodes.size();
-        // 节点size 加1
-        m_nodes.resize(m_nodes.size()+1);
-	      m_nodes[nid].id = nid;
 
-        // 读每行的第1个数字，表示父节点id
+        int nid = m_nodes.size();
+        m_nodes.resize(m_nodes.size()+1);
+	m_nodes[nid].id = nid;
+	
         int pid ;
         ssnode >> pid;
-        // 记录节点id的相互父子关系
         m_nodes[nid].parent = pid;
         m_nodes[pid].children.push_back(nid);
 
-        // 读取第2个数字，表示是否是叶子（Word）
         int nIsLeaf;
         ssnode >> nIsLeaf;
 
-        // 每个特征点描述子是256 bit，一个字节对应8 bit，所以一个特征点需要32个字节存储。
-        // 这里 F::L=32，也就是读取32个字节，最后以字符串形式存储在ssd
         stringstream ssd;
         for(int iD=0;iD<F::L;iD++)
         {
             string sElement;
             ssnode >> sElement;
             ssd << sElement << " ";
-	      }
-        // 将ssd存储在该节点的描述子
+	}
         F::fromString(m_nodes[nid].descriptor, ssd.str());
 
-        // 读取最后一个数字：节点的权重（Word才有）
         ssnode >> m_nodes[nid].weight;
 
         if(nIsLeaf>0)
         {
-            // 如果是叶子（Word），存储到m_words 
             int wid = m_words.size();
             m_words.resize(wid+1);
 
-            //存储Word的id，具有唯一性
             m_nodes[nid].word_id = wid;
-
-            //构建 vector<Node*> m_words，存储word所在node的指针
             m_words[wid] = &m_nodes[nid];
         }
         else
         {
-            //非叶子节点，直接分配 m_k个分支
             m_nodes[nid].children.reserve(m_k);
         }
     }

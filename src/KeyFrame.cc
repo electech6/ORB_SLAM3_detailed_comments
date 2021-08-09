@@ -96,6 +96,12 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     SetPose(F.mTcw);
 
     mnOriginMapId = pMap->GetId();
+
+    this->Tlr_ = cv::Matx44f(mTlr.at<float>(0,0),mTlr.at<float>(0,1),mTlr.at<float>(0,2),mTlr.at<float>(0,3),
+                             mTlr.at<float>(1,0),mTlr.at<float>(1,1),mTlr.at<float>(1,2),mTlr.at<float>(1,3),
+                             mTlr.at<float>(2,0),mTlr.at<float>(2,1),mTlr.at<float>(2,2),mTlr.at<float>(2,3),
+                             mTlr.at<float>(3,0),mTlr.at<float>(3,1),mTlr.at<float>(3,2),mTlr.at<float>(3,3));
+
 }
 
 void KeyFrame::ComputeBoW()
@@ -133,6 +139,19 @@ void KeyFrame::SetPose(const cv::Mat &Tcw_)
     cv::Mat center = (cv::Mat_<float>(4,1) << mHalfBaseline, 0 , 0, 1);
     // 世界坐标系下，左目相机中心到立体相机中心的向量，方向由左目相机指向立体相机中心
     Cw = Twc*center;
+
+    //Static matrices
+    this->Tcw_ = cv::Matx44f(Tcw.at<float>(0,0),Tcw.at<float>(0,1),Tcw.at<float>(0,2),Tcw.at<float>(0,3),
+                       Tcw.at<float>(1,0),Tcw.at<float>(1,1),Tcw.at<float>(1,2),Tcw.at<float>(1,3),
+                       Tcw.at<float>(2,0),Tcw.at<float>(2,1),Tcw.at<float>(2,2),Tcw.at<float>(2,3),
+                       Tcw.at<float>(3,0),Tcw.at<float>(3,1),Tcw.at<float>(3,2),Tcw.at<float>(3,3));
+
+    this->Twc_ = cv::Matx44f(Twc.at<float>(0,0),Twc.at<float>(0,1),Twc.at<float>(0,2),Twc.at<float>(0,3),
+                             Twc.at<float>(1,0),Twc.at<float>(1,1),Twc.at<float>(1,2),Twc.at<float>(1,3),
+                             Twc.at<float>(2,0),Twc.at<float>(2,1),Twc.at<float>(2,2),Twc.at<float>(2,3),
+                                     Twc.at<float>(3,0),Twc.at<float>(3,1),Twc.at<float>(3,2),Twc.at<float>(3,3));
+
+    this->Ow_ = cv::Matx31f(Ow.at<float>(0),Ow.at<float>(1),Ow.at<float>(2));
 }
 
 void KeyFrame::SetVelocity(const cv::Mat &Vw_)
@@ -248,9 +267,12 @@ void KeyFrame::UpdateBestCovisibles()
     list<int> lWs; // weight
     for(size_t i=0, iend=vPairs.size(); i<iend;i++)
     {
-        // push_front 后变成从大到小
-        lKFs.push_front(vPairs[i].second);
-        lWs.push_front(vPairs[i].first);
+        if(!vPairs[i].second->isBad())
+        {
+			// push_front 后变成从大到小
+            lKFs.push_front(vPairs[i].second);
+            lWs.push_front(vPairs[i].first);
+        }
     }
 
     // 权重从大到小
@@ -739,11 +761,6 @@ void KeyFrame::SetBadFlag()
             mbToBeErased = true;
             return;
         }
-        if(!mpParent)
-        {
-            //cout << "KF.BADFLAG-> There is not parent, but it is not the first KF in the map" << endl;
-            //cout << "KF.BADFLAG-> KF: " << mnId << "; first KF: " << mpMap->GetInitKFid() << endl;
-        }
     }
 
     // Step 2 遍历所有和当前关键帧共视的关键帧，删除他们与当前关键帧的联系
@@ -830,12 +847,6 @@ void KeyFrame::SetBadFlag()
             // 回答：不需要！这里while循环还没退出，会使用更新的sParentCandidates
             if(bContinue)
             {
-                if(pC->mnId == pP->mnId)
-                {
-                    /*cout << "ERROR: The parent and son can't be the same KF. ID: " << pC->mnId << endl;
-                    cout << "Current KF: " << mnId << endl;
-                    cout << "Parent of the map: " << endl;*/
-                }
 				// 因为父节点死了，并且子节点找到了新的父节点，就把它更新为自己的父节点
                 pC->ChangeParent(pP);
                 // 因为子节点找到了新的父节点并更新了父节点，那么该子节点升级，作为其它子节点的备选父节点
@@ -865,10 +876,6 @@ void KeyFrame::SetBadFlag()
 	        // 如果当前的关键帧要被删除的话就要计算这个,表示原父关键帧到当前关键帧的位姿变换
 	        // 注意在这个删除的过程中,其实并没有将当前关键帧中存储的父关键帧的指针删除掉
             mTcp = Tcw*mpParent->GetPoseInverse();
-        }
-        else
-        {
-            //cout << "Error: KF haven't got a parent, it is imposible reach this code point without him" << endl;
         }
 		// 标记当前关键帧已经死了
         mbBad = true;
@@ -1060,171 +1067,6 @@ void KeyFrame::UpdateMap(Map* pMap)
 {
     unique_lock<mutex> lock(mMutexMap);
     mpMap = pMap;
-}
-
-void KeyFrame::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP, set<GeometricCamera*>& spCam)
-{
-    // Save the id of each MapPoint in this KF, there can be null pointer in the vector
-    mvBackupMapPointsId.clear();
-    mvBackupMapPointsId.reserve(N);
-    for(int i = 0; i < N; ++i)
-    {
-
-        if(mvpMapPoints[i] && spMP.find(mvpMapPoints[i]) != spMP.end()) // Checks if the element is not null
-            mvBackupMapPointsId.push_back(mvpMapPoints[i]->mnId);
-        else // If the element is null his value is -1 because all the id are positives
-            mvBackupMapPointsId.push_back(-1);
-    }
-    //cout << "KeyFrame: ID from MapPoints stored" << endl;
-    // Save the id of each connected KF with it weight
-    mBackupConnectedKeyFrameIdWeights.clear();
-    for(std::map<KeyFrame*,int>::const_iterator it = mConnectedKeyFrameWeights.begin(), end = mConnectedKeyFrameWeights.end(); it != end; ++it)
-    {
-        if(spKF.find(it->first) != spKF.end())
-            mBackupConnectedKeyFrameIdWeights[it->first->mnId] = it->second;
-    }
-    //cout << "KeyFrame: ID from connected KFs stored" << endl;
-    // Save the parent id
-    mBackupParentId = -1;
-    if(mpParent && spKF.find(mpParent) != spKF.end())
-        mBackupParentId = mpParent->mnId;
-    //cout << "KeyFrame: ID from Parent KF stored" << endl;
-    // Save the id of the childrens KF
-    mvBackupChildrensId.clear();
-    mvBackupChildrensId.reserve(mspChildrens.size());
-    for(KeyFrame* pKFi : mspChildrens)
-    {
-        if(spKF.find(pKFi) != spKF.end())
-            mvBackupChildrensId.push_back(pKFi->mnId);
-    }
-    //cout << "KeyFrame: ID from Children KFs stored" << endl;
-    // Save the id of the loop edge KF
-    mvBackupLoopEdgesId.clear();
-    mvBackupLoopEdgesId.reserve(mspLoopEdges.size());
-    for(KeyFrame* pKFi : mspLoopEdges)
-    {
-        if(spKF.find(pKFi) != spKF.end())
-            mvBackupLoopEdgesId.push_back(pKFi->mnId);
-    }
-    //cout << "KeyFrame: ID from Loop KFs stored" << endl;
-    // Save the id of the merge edge KF
-    mvBackupMergeEdgesId.clear();
-    mvBackupMergeEdgesId.reserve(mspMergeEdges.size());
-    for(KeyFrame* pKFi : mspMergeEdges)
-    {
-        if(spKF.find(pKFi) != spKF.end())
-            mvBackupMergeEdgesId.push_back(pKFi->mnId);
-    }
-    //cout << "KeyFrame: ID from Merge KFs stored" << endl;
-
-    //Camera data
-    mnBackupIdCamera = -1;
-    if(mpCamera && spCam.find(mpCamera) != spCam.end())
-        mnBackupIdCamera = mpCamera->GetId();
-    //cout << "KeyFrame: ID from Camera1 stored; " << mnBackupIdCamera << endl;
-
-    mnBackupIdCamera2 = -1;
-    if(mpCamera2 && spCam.find(mpCamera2) != spCam.end())
-        mnBackupIdCamera2 = mpCamera2->GetId();
-    //cout << "KeyFrame: ID from Camera2 stored; " << mnBackupIdCamera2 << endl;
-
-    //Inertial data
-    mBackupPrevKFId = -1;
-    if(mPrevKF && spKF.find(mPrevKF) != spKF.end())
-        mBackupPrevKFId = mPrevKF->mnId;
-    //cout << "KeyFrame: ID from Prev KF stored" << endl;
-    mBackupNextKFId = -1;
-    if(mNextKF && spKF.find(mNextKF) != spKF.end())
-        mBackupNextKFId = mNextKF->mnId;
-    //cout << "KeyFrame: ID from NextKF stored" << endl;
-    if(mpImuPreintegrated)
-        mBackupImuPreintegrated.CopyFrom(mpImuPreintegrated);
-    //cout << "KeyFrame: Imu Preintegrated stored" << endl;
-}
-
-void KeyFrame::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsigned int, MapPoint*>& mpMPid, map<unsigned int, GeometricCamera*>& mpCamId){
-    // Rebuild the empty variables
-
-    // Pose
-    SetPose(Tcw);
-
-    // Reference reconstruction
-    // Each MapPoint sight from this KeyFrame
-    mvpMapPoints.clear();
-    mvpMapPoints.resize(N);
-    for(int i=0; i<N; ++i)
-    {
-        if(mvBackupMapPointsId[i] != -1)
-            mvpMapPoints[i] = mpMPid[mvBackupMapPointsId[i]];
-        else
-            mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
-    }
-
-    // Conected KeyFrames with him weight
-    mConnectedKeyFrameWeights.clear();
-    for(map<long unsigned int, int>::const_iterator it = mBackupConnectedKeyFrameIdWeights.begin(), end = mBackupConnectedKeyFrameIdWeights.end();
-        it != end; ++it)
-    {
-        KeyFrame* pKFi = mpKFid[it->first];
-        mConnectedKeyFrameWeights[pKFi] = it->second;
-    }
-
-    // Restore parent KeyFrame
-    if(mBackupParentId>=0)
-        mpParent = mpKFid[mBackupParentId];
-
-    // KeyFrame childrens
-    mspChildrens.clear();
-    for(vector<long unsigned int>::const_iterator it = mvBackupChildrensId.begin(), end = mvBackupChildrensId.end(); it!=end; ++it)
-    {
-        mspChildrens.insert(mpKFid[*it]);
-    }
-
-    // Loop edge KeyFrame
-    mspLoopEdges.clear();
-    for(vector<long unsigned int>::const_iterator it = mvBackupLoopEdgesId.begin(), end = mvBackupLoopEdgesId.end(); it != end; ++it)
-    {
-        mspLoopEdges.insert(mpKFid[*it]);
-    }
-
-    // Merge edge KeyFrame
-    mspMergeEdges.clear();
-    for(vector<long unsigned int>::const_iterator it = mvBackupMergeEdgesId.begin(), end = mvBackupMergeEdgesId.end(); it != end; ++it)
-    {
-        mspMergeEdges.insert(mpKFid[*it]);
-    }
-
-    //Camera data
-    if(mnBackupIdCamera >= 0)
-    {
-        mpCamera = mpCamId[mnBackupIdCamera];
-    }
-    if(mnBackupIdCamera2 >= 0)
-    {
-        mpCamera2 = mpCamId[mnBackupIdCamera2];
-    }
-
-    //Inertial data
-    if(mBackupPrevKFId != -1)
-    {
-        mPrevKF = mpKFid[mBackupPrevKFId];
-    }
-    if(mBackupNextKFId != -1)
-    {
-        mNextKF = mpKFid[mBackupNextKFId];
-    }
-    mpImuPreintegrated = &mBackupImuPreintegrated;
-
-
-    // Remove all backup container
-    mvBackupMapPointsId.clear();
-    mBackupConnectedKeyFrameIdWeights.clear();
-    mvBackupChildrensId.clear();
-    mvBackupLoopEdgesId.clear();
-
-    UpdateBestCovisibles();
-
-    //ComputeSceneMedianDepth();
 }
 
 bool KeyFrame::ProjectPointDistort(MapPoint* pMP, cv::Point2f &kp, float &u, float &v)
@@ -1426,5 +1268,95 @@ void KeyFrame::SetKeyFrameDatabase(KeyFrameDatabase* pKFDB)
 {
     mpKeyFrameDB = pKFDB;
 }
+
+cv::Matx33f KeyFrame::GetRotation_() {
+    unique_lock<mutex> lock(mMutexPose);
+    return Tcw_.get_minor<3,3>(0,0);
+}
+
+cv::Matx31f KeyFrame::GetTranslation_() {
+    unique_lock<mutex> lock(mMutexPose);
+    return Tcw_.get_minor<3,1>(0,3);
+}
+
+cv::Matx31f KeyFrame::GetCameraCenter_() {
+    unique_lock<mutex> lock(mMutexPose);
+    return Ow_;
+}
+
+cv::Matx33f KeyFrame::GetRightRotation_() {
+    unique_lock<mutex> lock(mMutexPose);
+    cv::Matx33f Rrl = Tlr_.get_minor<3,3>(0,0).t();
+    cv::Matx33f Rlw = Tcw_.get_minor<3,3>(0,0);
+    cv::Matx33f Rrw = Rrl * Rlw;
+
+    return Rrw;
+}
+
+cv::Matx31f KeyFrame::GetRightTranslation_() {
+    unique_lock<mutex> lock(mMutexPose);
+    cv::Matx33f Rrl = Tlr_.get_minor<3,3>(0,0).t();
+    cv::Matx31f tlw = Tcw_.get_minor<3,1>(0,3);
+    cv::Matx31f trl = - Rrl * Tlr_.get_minor<3,1>(0,3);
+
+    cv::Matx31f trw = Rrl * tlw + trl;
+
+    return trw;
+}
+
+cv::Matx44f KeyFrame::GetRightPose_() {
+    unique_lock<mutex> lock(mMutexPose);
+
+    cv::Matx33f Rrl = Tlr_.get_minor<3,3>(0,0).t();
+    cv::Matx33f Rlw = Tcw_.get_minor<3,3>(0,0);
+    cv::Matx33f Rrw = Rrl * Rlw;
+
+    cv::Matx31f tlw = Tcw_.get_minor<3,1>(0,3);
+    cv::Matx31f trl = - Rrl * Tlr_.get_minor<3,1>(0,3);
+
+    cv::Matx31f trw = Rrl * tlw + trl;
+
+    cv::Matx44f Trw{Rrw(0,0),Rrw(0,1),Rrw(0,2),trw(0),
+                    Rrw(1,0),Rrw(1,1),Rrw(1,2),trw(1),
+                    Rrw(2,0),Rrw(2,1),Rrw(2,2),trw(2),
+                    0.f,0.f,0.f,1.f};
+
+    return Trw;
+}
+
+cv::Matx31f KeyFrame::GetRightCameraCenter_() {
+    unique_lock<mutex> lock(mMutexPose);
+    cv::Matx33f Rwl = Tcw_.get_minor<3,3>(0,0).t();
+    cv::Matx31f tlr = Tlr_.get_minor<3,1>(0,3);
+
+    cv::Matx31f twr = Rwl * tlr + Ow_;
+
+    return twr;
+}
+
+cv::Matx31f KeyFrame::UnprojectStereo_(int i) {
+    const float z = mvDepth[i];
+    if(z>0)
+    {
+        const float u = mvKeys[i].pt.x;
+        const float v = mvKeys[i].pt.y;
+        const float x = (u-cx)*z*invfx;
+        const float y = (v-cy)*z*invfy;
+        cv::Matx31f x3Dc(x,y,z);
+
+        unique_lock<mutex> lock(mMutexPose);
+        return Twc_.get_minor<3,3>(0,0) * x3Dc + Twc_.get_minor<3,1>(0,3);
+    }
+    else
+        return cv::Matx31f::zeros();
+}
+
+cv::Matx44f KeyFrame::GetPose_()
+{
+    unique_lock<mutex> lock(mMutexPose);
+    return Tcw_;
+}
+
+
 
 } //namespace ORB_SLAM

@@ -22,6 +22,7 @@
 #include "ORBmatcher.h"
 #include "Optimizer.h"
 #include "Converter.h"
+#include "Config.h"
 
 #include<mutex>
 #include<chrono>
@@ -32,7 +33,7 @@ namespace ORB_SLAM3
 LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName):
     mpSystem(pSys), mbMonocular(bMonocular), mbInertial(bInertial), mbResetRequested(false), mbResetRequestedActiveMap(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas), bInitializing(false),
     mbAbortBA(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mbAcceptKeyFrames(true),
-    mbNewInit(false), mIdxInit(0), mScale(1.0), mInitSect(0), mbNotBA1(true), mbNotBA2(true), mIdxIteration(0), infoInertial(Eigen::MatrixXd::Zero(9,9))
+    mbNewInit(false), mIdxInit(0), mScale(1.0), mInitSect(0), mbNotBA1(true), mbNotBA2(true), infoInertial(Eigen::MatrixXd::Zero(9,9))
 {
     /*
      * mbStopRequested：    外部线程调用，为true，表示外部线程请求停止 local mapping
@@ -53,15 +54,11 @@ LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, 
     mNumLM = 0;
     mNumKFCulling=0;
 
-    //DEBUG: times and data from LocalMapping in each frame
+#ifdef REGISTER_TIMES
+    nLBA_exec = 0;
+    nLBA_abort = 0;
+#endif
 
-    strSequence = "";//_strSeqName;
-
-    //f_lm.open("localMapping_times" + strSequence + ".txt");
-    /*f_lm.open("localMapping_times.txt");
-
-    f_lm << "# Timestamp KF, Num CovKFs, Num KFs, Num RecentMPs, Num MPs, processKF, MPCulling, CreateMP, SearchNeigh, BA, KFCulling, [numFixKF_LBA]" << endl;
-    f_lm << fixed;*/
 }
 
 // 设置回环检测线程句柄
@@ -94,31 +91,34 @@ void LocalMapping::Run()
         // 等待处理的关键帧列表不为空 并且imu正常
         if(CheckNewKeyFrames() && !mbBadImu)
         {
-            // std::cout << "LM" << std::endl;
-            std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
 
+#ifdef REGISTER_TIMES
+            double timeLBA_ms = 0;
+            double timeKFCulling_ms = 0;
+
+            std::chrono::steady_clock::time_point time_StartProcessKF = std::chrono::steady_clock::now();
+#endif
             // BoW conversion and insertion in Map
             // Step 2 处理列表中的关键帧，包括计算BoW、更新观测、描述子、共视图，插入到地图等
             ProcessNewKeyFrame();
-            std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+#ifdef REGISTER_TIMES
+            std::chrono::steady_clock::time_point time_EndProcessKF = std::chrono::steady_clock::now();
 
+            double timeProcessKF = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndProcessKF - time_StartProcessKF).count();
+            vdKFInsert_ms.push_back(timeProcessKF);
+#endif
             // Check recent MapPoints
             // Step 3 根据地图点的观测情况剔除质量不好的地图点
             MapPointCulling();
-            std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+#ifdef REGISTER_TIMES
+            std::chrono::steady_clock::time_point time_EndMPCulling = std::chrono::steady_clock::now();
 
+            double timeMPCulling = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndMPCulling - time_EndProcessKF).count();
+            vdMPCulling_ms.push_back(timeMPCulling);
+#endif
             // Triangulate new MapPoints
             // Step 4 当前关键帧与相邻关键帧通过三角化产生新的地图点，使得跟踪更稳
             CreateNewMapPoints();
-            std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
-
-            // Save here:
-            // # Cov KFs
-            // # tot Kfs
-            // # recent added MPs
-            // # tot MPs
-            // # localMPs in LBA
-            // # fixedKFs in LBA
 
             mbAbortBA = false;
 			// 已经处理完队列中的最后的一个关键帧
@@ -129,20 +129,19 @@ void LocalMapping::Run()
                 SearchInNeighbors();
             }
 
-            std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
-            std::chrono::steady_clock::time_point t5 = t4, t6 = t4;
-            // mbAbortBA = false;
+#ifdef REGISTER_TIMES
+            std::chrono::steady_clock::time_point time_EndMPCreation = std::chrono::steady_clock::now();
 
-            //DEBUG--
-            /*f_lm << setprecision(0);
-            f_lm << mpCurrentKeyFrame->mTimeStamp*1e9 << ",";
-            f_lm << mpCurrentKeyFrame->GetVectorCovisibleKeyFrames().size() << ",";
-            f_lm << mpCurrentKeyFrame->GetMap()->GetAllKeyFrames().size() << ",";
-            f_lm << mlpRecentAddedMapPoints.size() << ",";
-            f_lm << mpCurrentKeyFrame->GetMap()->GetAllMapPoints().size() << ",";*/
-            //--
+            double timeMPCreation = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndMPCreation - time_EndMPCulling).count();
+            vdMPCreation_ms.push_back(timeMPCreation);
+#endif
+
+            bool b_doneLBA = false;
             int num_FixedKF_BA = 0;
-            // 已经处理完队列中的最后的一个关键帧，并且闭环检测没有请求停止LocalMapping
+            int num_OptKF_BA = 0;
+            int num_MPs_BA = 0;
+            int num_edges_BA = 0;
+			// 已经处理完队列中的最后的一个关键帧，并且闭环检测没有请求停止LocalMapping
             if(!CheckNewKeyFrames() && !stopRequested())
             {
                 // 地图中关键帧数目大于2个
@@ -172,21 +171,39 @@ void LocalMapping::Run()
                         }
                         // 条件---------1.1、跟踪成功的内点数目大于75-----1.2、并且是单目--或--2.1、跟踪成功的内点数目大于100-----2.2、并且不是单目             
                         bool bLarge = ((mpTracker->GetMatchesInliers()>75)&&mbMonocular)||((mpTracker->GetMatchesInliers()>100)&&!mbMonocular);
-                        // BA优化局部地图IMU
-                        Optimizer::LocalInertialBA(mpCurrentKeyFrame, &mbAbortBA, mpCurrentKeyFrame->GetMap(), bLarge, !mpCurrentKeyFrame->GetMap()->GetIniertialBA2());
+                        Optimizer::LocalInertialBA(mpCurrentKeyFrame, &mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA, bLarge, !mpCurrentKeyFrame->GetMap()->GetIniertialBA2());
+                        b_doneLBA = true;
                     }
                     else
                     {
-                        // Step 6.2 不是IMU模式或者当前关键帧所在的地图还未完成IMU初始化
-                        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-                        // 局部地图BA，不包括IMU数据
+						// Step 6.2 不是IMU模式或者当前关键帧所在的地图还未完成IMU初始化
+						// 局部地图BA，不包括IMU数据
 						// 注意这里的第二个参数是按地址传递的,当这里的 mbAbortBA 状态发生变化时，能够及时执行/停止BA
-                        Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA);
-                        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+                        Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
+                        b_doneLBA = true;
                     }
+
+                }
+#ifdef REGISTER_TIMES
+                std::chrono::steady_clock::time_point time_EndLBA = std::chrono::steady_clock::now();
+
+                if(b_doneLBA)
+                {
+                    timeLBA_ms = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndLBA - time_EndMPCreation).count();
+                    vdLBASync_ms.push_back(timeLBA_ms);
+
+                    nLBA_exec += 1;
+                    if(mbAbortBA)
+                    {
+                        nLBA_abort += 1;
+                    }
+                    vnLBA_edges.push_back(num_edges_BA);
+                    vnLBA_KFopt.push_back(num_OptKF_BA);
+                    vnLBA_KFfixed.push_back(num_FixedKF_BA);
+                    vnLBA_MPs.push_back(num_MPs_BA);
                 }
 
-                t5 = std::chrono::steady_clock::now();
+#endif
 
                 // Initialize IMU here
                 // Step 7 当前关键帧所在地图的IMU初始化
@@ -204,8 +221,13 @@ void LocalMapping::Run()
                 // 冗余的判定：该关键帧的90%的地图点可以被其它关键帧观测到
                 KeyFrameCulling();
 
-                t6 = std::chrono::steady_clock::now();
-                // Step 9 如果累计时间差小于100s 并且 是IMU模式，进行VIBA
+#ifdef REGISTER_TIMES
+                std::chrono::steady_clock::time_point time_EndKFCulling = std::chrono::steady_clock::now();
+
+                timeKFCulling_ms = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndKFCulling - time_EndLBA).count();
+                vdKFCullingSync_ms.push_back(timeKFCulling_ms);
+#endif
+				// Step 9 如果累计时间差小于100s 并且 是IMU模式，进行VIBA
                 if ((mTinit<100.0f) && mbInertial)
                 {
                     // Step 9.1 根据条件判断是否进行VIBA1
@@ -262,31 +284,21 @@ void LocalMapping::Run()
                 }
             }
 
-            std::chrono::steady_clock::time_point t7 = std::chrono::steady_clock::now();
+#ifdef REGISTER_TIMES
+            vdLBA_ms.push_back(timeLBA_ms);
+            vdKFCulling_ms.push_back(timeKFCulling_ms);
+#endif
 
 			// Step 10 将当前帧加入到闭环检测队列中
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
-            std::chrono::steady_clock::time_point t8 = std::chrono::steady_clock::now();
 
-            double t_procKF = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t1 - t0).count();
-            double t_MPcull = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t2 - t1).count();
-            double t_CheckMP = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t3 - t2).count();
-            double t_searchNeigh = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t4 - t3).count();
-            double t_Opt = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t5 - t4).count();
-            double t_KF_cull = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t6 - t5).count();
-            double t_Insert = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t8 - t7).count();
 
-            //DEBUG--
-            /*f_lm << setprecision(6);
-            f_lm << t_procKF << ",";
-            f_lm << t_MPcull << ",";
-            f_lm << t_CheckMP << ",";
-            f_lm << t_searchNeigh << ",";
-            f_lm << t_Opt << ",";
-            f_lm << t_KF_cull << ",";
-            f_lm << setprecision(0) << num_FixedKF_BA << "\n";*/
-            //--
+#ifdef REGISTER_TIMES
+            std::chrono::steady_clock::time_point time_EndLocalMap = std::chrono::steady_clock::now();
 
+            double timeLocalMap = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndLocalMap - time_StartProcessKF).count();
+            vdLMTotal_ms.push_back(timeLocalMap);
+#endif
         }
         else if(Stop() && !mbBadImu) // 当要终止当前线程的时候
         {
@@ -493,15 +505,16 @@ void LocalMapping::CreateNewMapPoints()
     ORBmatcher matcher(th,false);
 
     // 取出当前帧从世界坐标系到相机坐标系的变换矩阵
-    cv::Mat Rcw1 = mpCurrentKeyFrame->GetRotation();
-    cv::Mat Rwc1 = Rcw1.t();
-    cv::Mat tcw1 = mpCurrentKeyFrame->GetTranslation();
-    cv::Mat Tcw1(3,4,CV_32F);
-    Rcw1.copyTo(Tcw1.colRange(0,3));
-    tcw1.copyTo(Tcw1.col(3));
+    auto Rcw1 = mpCurrentKeyFrame->GetRotation_();
+    auto Rwc1 = Rcw1.t();
+    auto tcw1 = mpCurrentKeyFrame->GetTranslation_();
+    cv::Matx44f Tcw1{Rcw1(0,0),Rcw1(0,1),Rcw1(0,2),tcw1(0),
+                     Rcw1(1,0),Rcw1(1,1),Rcw1(1,2),tcw1(1),
+                     Rcw1(2,0),Rcw1(2,1),Rcw1(2,2),tcw1(2),
+                     0.f,0.f,0.f,1.f};
 
     // 得到当前关键帧（左目）光心在世界坐标系中的坐标、内参
-    cv::Mat Ow1 = mpCurrentKeyFrame->GetCameraCenter();
+    auto Ow1 = mpCurrentKeyFrame->GetCameraCenter_();
 
     const float &fx1 = mpCurrentKeyFrame->fx;
     const float &fy1 = mpCurrentKeyFrame->fy;
@@ -527,9 +540,9 @@ void LocalMapping::CreateNewMapPoints()
 
         // Check first that baseline is not too short
         // 邻接的关键帧光心在世界坐标系中的坐标
-        cv::Mat Ow2 = pKF2->GetCameraCenter();
+        auto Ow2 = pKF2->GetCameraCenter_();
         // 基线向量，两个关键帧间的相机位移
-        cv::Mat vBaseline = Ow2-Ow1;
+        auto vBaseline = Ow2-Ow1;
         // 基线长度
         const float baseline = cv::norm(vBaseline);
 
@@ -555,7 +568,7 @@ void LocalMapping::CreateNewMapPoints()
 
         // Compute Fundamental Matrix
         // Step 4：根据两个关键帧的位姿计算它们之间的基础矩阵
-        cv::Mat F12 = ComputeF12(mpCurrentKeyFrame,pKF2);
+        auto F12 = ComputeF12_(mpCurrentKeyFrame,pKF2);
 
         // Search matches that fullfil epipolar constraint
         // Step 5：通过BoW对两关键帧的未匹配的特征点快速匹配，用极线约束抑制离群点，生成新的匹配点对
@@ -563,14 +576,16 @@ void LocalMapping::CreateNewMapPoints()
         bool bCoarse = mbInertial &&
                 ((!mpCurrentKeyFrame->GetMap()->GetIniertialBA2() && mpCurrentKeyFrame->GetMap()->GetIniertialBA1())||
                  mpTracker->mState==Tracking::RECENTLY_LOST);
-        matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false,bCoarse);
 
-        cv::Mat Rcw2 = pKF2->GetRotation();
-        cv::Mat Rwc2 = Rcw2.t();
-        cv::Mat tcw2 = pKF2->GetTranslation();
-        cv::Mat Tcw2(3,4,CV_32F);
-        Rcw2.copyTo(Tcw2.colRange(0,3));
-        tcw2.copyTo(Tcw2.col(3));
+        matcher.SearchForTriangulation_(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false,bCoarse);
+
+        auto Rcw2 = pKF2->GetRotation_();
+        auto Rwc2 = Rcw2.t();
+        auto tcw2 = pKF2->GetTranslation_();
+        cv::Matx44f Tcw2{Rcw2(0,0),Rcw2(0,1),Rcw2(0,2),tcw2(0),
+                         Rcw2(1,0),Rcw2(1,1),Rcw2(1,2),tcw2(1),
+                         Rcw2(2,0),Rcw2(2,1),Rcw2(2,2),tcw2(2),
+                         0.f,0.f,0.f,1.f};
 
         const float &fx2 = pKF2->fx;
         const float &fy2 = pKF2->fy;
@@ -612,65 +627,65 @@ void LocalMapping::CreateNewMapPoints()
 
             if(mpCurrentKeyFrame->mpCamera2 && pKF2->mpCamera2){
                 if(bRight1 && bRight2){
-                    Rcw1 = mpCurrentKeyFrame->GetRightRotation();
+                    Rcw1 = mpCurrentKeyFrame->GetRightRotation_();
                     Rwc1 = Rcw1.t();
-                    tcw1 = mpCurrentKeyFrame->GetRightTranslation();
-                    Tcw1 = mpCurrentKeyFrame->GetRightPose();
-                    Ow1 = mpCurrentKeyFrame->GetRightCameraCenter();
+                    tcw1 = mpCurrentKeyFrame->GetRightTranslation_();
+                    Tcw1 = mpCurrentKeyFrame->GetRightPose_();
+                    Ow1 = mpCurrentKeyFrame->GetRightCameraCenter_();
 
-                    Rcw2 = pKF2->GetRightRotation();
+                    Rcw2 = pKF2->GetRightRotation_();
                     Rwc2 = Rcw2.t();
-                    tcw2 = pKF2->GetRightTranslation();
-                    Tcw2 = pKF2->GetRightPose();
-                    Ow2 = pKF2->GetRightCameraCenter();
+                    tcw2 = pKF2->GetRightTranslation_();
+                    Tcw2 = pKF2->GetRightPose_();
+                    Ow2 = pKF2->GetRightCameraCenter_();
 
                     pCamera1 = mpCurrentKeyFrame->mpCamera2;
                     pCamera2 = pKF2->mpCamera2;
                 }
                 else if(bRight1 && !bRight2){
-                    Rcw1 = mpCurrentKeyFrame->GetRightRotation();
+                    Rcw1 = mpCurrentKeyFrame->GetRightRotation_();
                     Rwc1 = Rcw1.t();
-                    tcw1 = mpCurrentKeyFrame->GetRightTranslation();
-                    Tcw1 = mpCurrentKeyFrame->GetRightPose();
-                    Ow1 = mpCurrentKeyFrame->GetRightCameraCenter();
+                    tcw1 = mpCurrentKeyFrame->GetRightTranslation_();
+                    Tcw1 = mpCurrentKeyFrame->GetRightPose_();
+                    Ow1 = mpCurrentKeyFrame->GetRightCameraCenter_();
 
-                    Rcw2 = pKF2->GetRotation();
+                    Rcw2 = pKF2->GetRotation_();
                     Rwc2 = Rcw2.t();
-                    tcw2 = pKF2->GetTranslation();
-                    Tcw2 = pKF2->GetPose();
-                    Ow2 = pKF2->GetCameraCenter();
+                    tcw2 = pKF2->GetTranslation_();
+                    Tcw2 = pKF2->GetPose_();
+                    Ow2 = pKF2->GetCameraCenter_();
 
                     pCamera1 = mpCurrentKeyFrame->mpCamera2;
                     pCamera2 = pKF2->mpCamera;
                 }
                 else if(!bRight1 && bRight2){
-                    Rcw1 = mpCurrentKeyFrame->GetRotation();
+                    Rcw1 = mpCurrentKeyFrame->GetRotation_();
                     Rwc1 = Rcw1.t();
-                    tcw1 = mpCurrentKeyFrame->GetTranslation();
-                    Tcw1 = mpCurrentKeyFrame->GetPose();
-                    Ow1 = mpCurrentKeyFrame->GetCameraCenter();
+                    tcw1 = mpCurrentKeyFrame->GetTranslation_();
+                    Tcw1 = mpCurrentKeyFrame->GetPose_();
+                    Ow1 = mpCurrentKeyFrame->GetCameraCenter_();
 
-                    Rcw2 = pKF2->GetRightRotation();
+                    Rcw2 = pKF2->GetRightRotation_();
                     Rwc2 = Rcw2.t();
-                    tcw2 = pKF2->GetRightTranslation();
-                    Tcw2 = pKF2->GetRightPose();
-                    Ow2 = pKF2->GetRightCameraCenter();
+                    tcw2 = pKF2->GetRightTranslation_();
+                    Tcw2 = pKF2->GetRightPose_();
+                    Ow2 = pKF2->GetRightCameraCenter_();
 
                     pCamera1 = mpCurrentKeyFrame->mpCamera;
                     pCamera2 = pKF2->mpCamera2;
                 }
                 else{
-                    Rcw1 = mpCurrentKeyFrame->GetRotation();
+                    Rcw1 = mpCurrentKeyFrame->GetRotation_();
                     Rwc1 = Rcw1.t();
-                    tcw1 = mpCurrentKeyFrame->GetTranslation();
-                    Tcw1 = mpCurrentKeyFrame->GetPose();
-                    Ow1 = mpCurrentKeyFrame->GetCameraCenter();
+                    tcw1 = mpCurrentKeyFrame->GetTranslation_();
+                    Tcw1 = mpCurrentKeyFrame->GetPose_();
+                    Ow1 = mpCurrentKeyFrame->GetCameraCenter_();
 
-                    Rcw2 = pKF2->GetRotation();
+                    Rcw2 = pKF2->GetRotation_();
                     Rwc2 = Rcw2.t();
-                    tcw2 = pKF2->GetTranslation();
-                    Tcw2 = pKF2->GetPose();
-                    Ow2 = pKF2->GetCameraCenter();
+                    tcw2 = pKF2->GetTranslation_();
+                    Tcw2 = pKF2->GetPose_();
+                    Ow2 = pKF2->GetCameraCenter_();
 
                     pCamera1 = mpCurrentKeyFrame->mpCamera;
                     pCamera2 = pKF2->mpCamera;
@@ -680,11 +695,11 @@ void LocalMapping::CreateNewMapPoints()
             // Check parallax between rays
 			// Step 6.2：利用匹配点反投影得到视差角
 			// 特征点反投影,其实得到的是在各自相机坐标系下的一个非归一化的方向向量,和这个点的反投影射线重合
-            cv::Mat xn1 = pCamera1->unprojectMat(kp1.pt);
-            cv::Mat xn2 = pCamera2->unprojectMat(kp2.pt);
+            auto xn1 = pCamera1->unprojectMat_(kp1.pt);
+            auto xn2 = pCamera2->unprojectMat_(kp2.pt);
             // 由相机坐标系转到世界坐标系(得到的是那条反投影射线的一个同向向量在世界坐标系下的表示,还是只能够表示方向)，得到视差角余弦值
-            cv::Mat ray1 = Rwc1*xn1;
-            cv::Mat ray2 = Rwc2*xn2;
+            auto ray1 = Rwc1*xn1;
+            auto ray2 = Rwc2*xn2;
             // 这个就是求向量之间角度公式
             const float cosParallaxRays = ray1.dot(ray2)/(cv::norm(ray1)*cv::norm(ray2));
 
@@ -706,68 +721,70 @@ void LocalMapping::CreateNewMapPoints()
             
             // 得到双目观测的视差角
             cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);
-
-            // Step 6.4：三角化恢复3D点
-            cv::Mat x3D;
-            // cosParallaxRays>0 && (bStereo1 || bStereo2 || cosParallaxRays<0.9998)表明视差角正常,0.9998 对应1°
-            // cosParallaxRays < cosParallaxStereo 表明视差角很小
-            // ?视差角度小时用三角法恢复3D点，视差角大时用双目恢复3D点（双目以及深度有效）
-            // 参考：https://github.com/raulmur/ORB_SLAM2/issues/345
+			// Step 6.4：三角化恢复3D点
+            cv::Matx31f x3D;
+            bool bEstimated = false;
             if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 ||
                (cosParallaxRays<0.9998 && mbInertial) || (cosParallaxRays<0.9998 && !mbInertial)))
             {
                 // Linear Triangulation Method
-                // 见Initializer.cc的 Triangulate 函数,实现是一样的,顶多就是把投影矩阵换成了变换矩阵
-                cv::Mat A(4,4,CV_32F);
-                A.row(0) = xn1.at<float>(0)*Tcw1.row(2)-Tcw1.row(0);
-                A.row(1) = xn1.at<float>(1)*Tcw1.row(2)-Tcw1.row(1);
-                A.row(2) = xn2.at<float>(0)*Tcw2.row(2)-Tcw2.row(0);
-                A.row(3) = xn2.at<float>(1)*Tcw2.row(2)-Tcw2.row(1);
+                cv::Matx14f A_r0 = xn1(0) * Tcw1.row(2) - Tcw1.row(0);
+                cv::Matx14f A_r1 = xn1(1) * Tcw1.row(2) - Tcw1.row(1);
+                cv::Matx14f A_r2 = xn2(0) * Tcw2.row(2) - Tcw2.row(0);
+                cv::Matx14f A_r3 = xn2(1) * Tcw2.row(2) - Tcw2.row(1);
+                cv::Matx44f A{A_r0(0), A_r0(1), A_r0(2), A_r0(3),
+                              A_r1(0), A_r1(1), A_r1(2), A_r1(3),
+                              A_r2(0), A_r2(1), A_r2(2), A_r2(3),
+                              A_r3(0), A_r3(1), A_r3(2), A_r3(3)};
 
-                cv::Mat w,u,vt;
+                cv::Matx44f u,vt;
+                cv::Matx41f w;
                 cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV);
 
-                x3D = vt.row(3).t();
-                // 归一化之前的检查
-                if(x3D.at<float>(3)==0)
+                cv::Matx41f x3D_h = vt.row(3).t();
+
+                if(x3D_h(3)==0)
                     continue;
                 // 归一化成为齐次坐标,然后提取前面三个维度作为欧式坐标
                 // Euclidean coordinates
-                x3D = x3D.rowRange(0,3)/x3D.at<float>(3);
+                x3D = x3D_h.get_minor<3,1>(0,0) / x3D_h(3);
+                bEstimated = true;
 
             }
             else if(bStereo1 && cosParallaxStereo1<cosParallaxStereo2)
             {
                 // 如果是双目，用视差角更大的那个双目信息来恢复，直接用已知3D点反投影了
-                x3D = mpCurrentKeyFrame->UnprojectStereo(idx1);
+                x3D = mpCurrentKeyFrame->UnprojectStereo_(idx1);
+                bEstimated = true;
             }
             else if(bStereo2 && cosParallaxStereo2<cosParallaxStereo1)
             {
-                x3D = pKF2->UnprojectStereo(idx2);
+                x3D = pKF2->UnprojectStereo_(idx2);
+                bEstimated = true;
             }
             else
             {
                 continue; //No stereo and very low parallax
             }
             // 为方便后续计算，转换成为了行向量
-            cv::Mat x3Dt = x3D.t();
+            cv::Matx13f x3Dt = x3D.t();
 
-            if(x3Dt.empty()) continue;
+            if(!bEstimated) continue;
             //Check triangulation in front of cameras
             // Step 6.5：检测生成的3D点是否在相机前方,不在的话就放弃这个点
-            float z1 = Rcw1.row(2).dot(x3Dt)+tcw1.at<float>(2);
+            float z1 = Rcw1.row(2).dot(x3Dt)+tcw1(2);
             if(z1<=0)
                 continue;
 
-            float z2 = Rcw2.row(2).dot(x3Dt)+tcw2.at<float>(2);
+            float z2 = Rcw2.row(2).dot(x3Dt)+tcw2(2);
             if(z2<=0)
                 continue;
 
             //Check reprojection error in first keyframe
             // Step 6.6：计算3D点在当前关键帧下的重投影误差
             const float &sigmaSquare1 = mpCurrentKeyFrame->mvLevelSigma2[kp1.octave];
-            const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1.at<float>(0);
-            const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1.at<float>(1);
+            const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1(0);
+            const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1(1);
             const float invz1 = 1.0/z1;
 
             if(!bStereo1)
@@ -799,8 +816,8 @@ void LocalMapping::CreateNewMapPoints()
             //Check reprojection error in second keyframe
             // 计算3D点在另一个关键帧下的重投影误差，操作同上
             const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
-            const float x2 = Rcw2.row(0).dot(x3Dt)+tcw2.at<float>(0);
-            const float y2 = Rcw2.row(1).dot(x3Dt)+tcw2.at<float>(1);
+            const float x2 = Rcw2.row(0).dot(x3Dt)+tcw2(0);
+            const float y2 = Rcw2.row(1).dot(x3Dt)+tcw2(1);
             const float invz2 = 1.0/z2;
             if(!bStereo2)
             {
@@ -826,10 +843,10 @@ void LocalMapping::CreateNewMapPoints()
             // Step 6.7：检查尺度连续性
 
             // 世界坐标系下，3D点与相机间的向量，方向由相机指向3D点
-            cv::Mat normal1 = x3D-Ow1;
+            auto normal1 = x3D-Ow1;
             float dist1 = cv::norm(normal1);
 
-            cv::Mat normal2 = x3D-Ow2;
+            auto normal2 = x3D-Ow2;
             float dist2 = cv::norm(normal2);
 
             if(dist1==0 || dist2==0)
@@ -847,8 +864,9 @@ void LocalMapping::CreateNewMapPoints()
                 continue;
 
             // Triangulation is succesfull
-            // Step 6.8：三角化生成3D点成功，构造成MapPoint
-            MapPoint* pMP = new MapPoint(x3D,mpCurrentKeyFrame,mpAtlas->GetCurrentMap());
+			// Step 6.8：三角化生成3D点成功，构造成MapPoint
+            cv::Mat x3D_(x3D);
+            MapPoint* pMP = new MapPoint(x3D_,mpCurrentKeyFrame,mpAtlas->GetCurrentMap());
 
             // Step 6.9：为该MapPoint添加属性：
             // a.观测到该MapPoint的关键帧
@@ -1044,8 +1062,26 @@ cv::Mat LocalMapping::ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2)
     const cv::Mat &K1 = pKF1->mpCamera->toK();
     const cv::Mat &K2 = pKF2->mpCamera->toK();
 
-    // Essential Matrix: t12叉乘R12
-    // Fundamental Matrix: inv(K1)*E*inv(K2)
+
+    return K1.t().inv()*t12x*R12*K2.inv();
+}
+
+cv::Matx33f LocalMapping::ComputeF12_(KeyFrame *&pKF1, KeyFrame *&pKF2)
+{
+    auto R1w = pKF1->GetRotation_();
+    auto t1w = pKF1->GetTranslation_();
+    auto R2w = pKF2->GetRotation_();
+    auto t2w = pKF2->GetTranslation_();
+
+    auto R12 = R1w*R2w.t();
+    auto t12 = -R1w*R2w.t()*t2w+t1w;
+
+    auto t12x = SkewSymmetricMatrix_(t12);
+
+    const auto &K1 = pKF1->mpCamera->toK_();
+    const auto &K2 = pKF2->mpCamera->toK_();
+
+
     return K1.t().inv()*t12x*R12*K2.inv();
 }
 
@@ -1322,7 +1358,15 @@ cv::Mat LocalMapping::SkewSymmetricMatrix(const cv::Mat &v)
             -v.at<float>(1),  v.at<float>(0),              0);
 }
 
-// 请求当前线程复位,由外部线程调用,堵塞的
+cv::Matx33f LocalMapping::SkewSymmetricMatrix_(const cv::Matx31f &v)
+{
+    cv::Matx33f skew{0.f, -v(2), v(1),
+                     v(2), 0.f, -v(0),
+                     -v(1), v(0), 0.f};
+
+    return skew;
+}
+
 void LocalMapping::RequestReset()
 {
     {

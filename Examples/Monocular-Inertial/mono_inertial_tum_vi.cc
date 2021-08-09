@@ -105,7 +105,6 @@ int main(int argc, char **argv)
         // Step 3 默认IMU数据早于图像数据记录，找到和第一帧图像时间戳最接近的imu时间戳索引，记录在first_imu[seq]中
         while(vTimestampsImu[seq][first_imu[seq]]<=vTimestampsCam[seq][0]){
             first_imu[seq]++;
-            cout << "first_imu[seq] = "  << first_imu[seq] << endl;
         }
         // 因为上面退出while循环时IMU时间戳刚刚超过图像时间戳，所以这里需要再减一个索引    
         first_imu[seq]--; // first imu measurement to be considered

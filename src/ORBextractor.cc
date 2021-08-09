@@ -1043,7 +1043,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
     allKeypoints.resize(nlevels);
 
 	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
-    const float W = 30;
+    const float W = 35;
 
     // 对每一层图像做处理
 	//遍历所有图像

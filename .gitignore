@@ -1,6 +1,6 @@
 CMakeLists.txt.user
 CMakeLists_modified.txt
-Examples/
+
 Examples/RGB-D/rgbd_tum
 
 Examples/Monocular/mono_euroc
@@ -47,7 +47,3 @@ cmake-build-debug/
 
 *.pyc
 *.osa
-
-.vscode/ 
-CMakeLists.txt
-build.sh

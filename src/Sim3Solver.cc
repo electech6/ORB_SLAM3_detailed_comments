@@ -381,7 +381,7 @@ cv::Mat Sim3Solver::find(vector<bool> &vbInliers12, int &nInliers)
 void Sim3Solver::ComputeCentroid(cv::Mat &P, cv::Mat &Pr, cv::Mat &C)
 {
     // 矩阵P每一行求和，结果存在C。这两句也可以使用CV_REDUCE_AVG选项来实现
-    cv::reduce(P,C,1,CV_REDUCE_SUM);
+    cv::reduce(P,C,1,cv::REDUCE_SUM);
     C = C/P.cols;// 求平均
 
     for(int i=0; i<P.cols; i++)
@@ -458,7 +458,7 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     double ang=atan2(norm(vec),evec.at<float>(0,0));
 
     // vec/norm(vec)归一化得到归一化后的旋转向量,然后乘上角度得到包含了旋转轴和旋转角信息的旋转向量vec
-    vec = 2*ang*vec/norm(vec); //Angle-axis x. quaternion angle is the half
+    vec = 2*ang*vec/norm(vec); //Angle-axis representation. quaternion angle is the half
 
     mR12i.create(3,3,P1.type());
     // 旋转向量（轴角）转换为旋转矩阵

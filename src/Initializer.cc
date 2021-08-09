@@ -196,11 +196,11 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
 		//更偏向于平面，此时从单应矩阵恢复，函数ReconstructH返回bool型结果
         return ReconstructH(vbMatchesInliersH,	//输入，匹配成功的特征点对Inliers标记
 							H,					//输入，前面RANSAC计算后的单应矩阵
-							mK,					//输入，相机的内参数矩阵
+							K,					//输入，相机的内参数矩阵
 							R21,t21,			//输出，计算出来的相机从参考帧1到当前帧2所发生的旋转和位移变换
 							vP3D,				//特征点对经过三角测量之后的空间坐标，也就是地图点
 							vbTriangulated,		//特征点对是否成功三角化的标记
-							1.0,				//这个对应的形参为minParallax，即认为某对特征点的三角化测量中，认为其测量有效时
+							minParallax,				//这个对应的形参为minParallax，即认为某对特征点的三角化测量中，认为其测量有效时
 												//需要满足的最小视差角（如果视差角过小则会引起非常大的观测误差）,单位是角度
 							50);				//为了进行运动恢复，所需要的最少的三角化测量成功的点个数
     }

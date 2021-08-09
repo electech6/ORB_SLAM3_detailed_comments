@@ -49,6 +49,10 @@ cv::BFMatcher Frame::BFmatcher = cv::BFMatcher(cv::NORM_HAMMING);
 
 Frame::Frame(): mpcpi(NULL), mpImuPreintegrated(NULL), mpPrevFrame(NULL), mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbImuPreintegrated(false)
 {
+#ifdef REGISTER_TIMES
+    mTimeStereoMatch = 0;
+    mTimeORB_Ext = 0;
+#endif
 }
 
 
@@ -69,7 +73,8 @@ Frame::Frame(const Frame &frame)
      mpCamera(frame.mpCamera), mpCamera2(frame.mpCamera2), Nleft(frame.Nleft), Nright(frame.Nright),
      monoLeft(frame.monoLeft), monoRight(frame.monoRight), mvLeftToRightMatch(frame.mvLeftToRightMatch),
      mvRightToLeftMatch(frame.mvRightToLeftMatch), mvStereo3Dpoints(frame.mvStereo3Dpoints),
-     mTlr(frame.mTlr.clone()), mRlr(frame.mRlr.clone()), mtlr(frame.mtlr.clone()), mTrl(frame.mTrl.clone()), mTimeStereoMatch(frame.mTimeStereoMatch), mTimeORB_Ext(frame.mTimeORB_Ext)
+     mTlr(frame.mTlr.clone()), mRlr(frame.mRlr.clone()), mtlr(frame.mtlr.clone()), mTrl(frame.mTrl.clone()),
+     mTrlx(frame.mTrlx), mTlrx(frame.mTlrx), mOwx(frame.mOwx), mRcwx(frame.mRcwx), mtcwx(frame.mtcwx)
 {
     for(int i=0;i<FRAME_GRID_COLS;i++)
         for(int j=0; j<FRAME_GRID_ROWS; j++){
@@ -87,13 +92,18 @@ Frame::Frame(const Frame &frame)
 
     mmProjectPoints = frame.mmProjectPoints;
     mmMatchedInImage = frame.mmMatchedInImage;
+
+#ifdef REGISTER_TIMES
+    mTimeStereoMatch = frame.mTimeStereoMatch;
+    mTimeORB_Ext = frame.mTimeORB_Ext;
+#endif
 }
 
 
 Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera, Frame* pPrevF, const IMU::Calib &ImuCalib)
     :mpcpi(NULL), mpORBvocabulary(voc),mpORBextractorLeft(extractorLeft),mpORBextractorRight(extractorRight), mTimeStamp(timeStamp), mK(K.clone()), mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mImuCalib(ImuCalib), mpImuPreintegrated(NULL), mpPrevFrame(pPrevF),mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbImuPreintegrated(false),
-     mpCamera(pCamera) ,mpCamera2(nullptr), mTimeStereoMatch(0), mTimeORB_Ext(0)
+     mpCamera(pCamera) ,mpCamera2(nullptr)
 {
     // Step 1 帧的ID 自增
     mnId=nNextId++;
@@ -115,13 +125,21 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
-    // Step 3 对左目右目图像提取ORB特征点, 第一个参数0-左图， 1-右图。为加速计算，同时开了两个线程计算
+	// Step 3 对左目右目图像提取ORB特征点, 第一个参数0-左图， 1-右图。为加速计算，同时开了两个线程计算
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_StartExtORB = std::chrono::steady_clock::now();
+#endif
     thread threadLeft(&Frame::ExtractORB,this,0,imLeft,0,0);
 	// 对右目图像提取orb特征
 	thread threadRight(&Frame::ExtractORB,this,1,imRight,0,0);
 	//等待两张图像特征点提取过程完成
     threadLeft.join();
     threadRight.join();
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_EndExtORB = std::chrono::steady_clock::now();
+
+    mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
+#endif
 
 	//mvKeys中保存的是左图像中的特征点，这里是获取左侧图像中特征点的个数
     N = mvKeys.size();
@@ -133,13 +151,20 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     // Step 4 用OpenCV的矫正函数、内参对提取到的特征点进行矫正
     UndistortKeyPoints();
 
-    // Step 5 计算双目间特征点的匹配，只有匹配成功的特征点会计算其深度,深度存放在 mvDepth 
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_StartStereoMatches = std::chrono::steady_clock::now();
+#endif
+	// Step 5 计算双目间特征点的匹配，只有匹配成功的特征点会计算其深度,深度存放在 mvDepth 
 	// mvuRight中存储的应该是左图像中的点所匹配的在右图像中的点的横坐标（纵坐标相同）
     ComputeStereoMatches();
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_EndStereoMatches = std::chrono::steady_clock::now();
 
-    // 初始化本帧的地图点
-    mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));   
-	// 记录地图点是否为外点，初始化均为外点false
+    mTimeStereoMatch = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndStereoMatches - time_StartStereoMatches).count();
+#endif
+
+	// 初始化本帧的地图点
+    mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
     mvbOutlier = vector<bool>(N,false);
     mmProjectPoints.clear();// = map<long unsigned int, cv::Point2f>(N, static_cast<cv::Point2f>(NULL));
     mmMatchedInImage.clear();
@@ -204,7 +229,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     :mpcpi(NULL),mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mImuCalib(ImuCalib), mpImuPreintegrated(NULL), mpPrevFrame(pPrevF), mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbImuPreintegrated(false),
-     mpCamera(pCamera),mpCamera2(nullptr), mTimeStereoMatch(0), mTimeORB_Ext(0)
+     mpCamera(pCamera),mpCamera2(nullptr)
 {
     // Step 1 帧的ID 自增
     mnId=nNextId++;
@@ -225,11 +250,11 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
-#ifdef SAVE_TIMES
+#ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartExtORB = std::chrono::steady_clock::now();
 #endif
     ExtractORB(0,imGray,0,0);
-#ifdef SAVE_TIMES
+#ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_EndExtORB = std::chrono::steady_clock::now();
 
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
@@ -305,7 +330,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     :mpcpi(NULL),mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(static_cast<Pinhole*>(pCamera)->toK()), mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mImuCalib(ImuCalib), mpImuPreintegrated(NULL),mpPrevFrame(pPrevF),mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbImuPreintegrated(false), mpCamera(pCamera),
-     mpCamera2(nullptr), mTimeStereoMatch(0), mTimeORB_Ext(0)
+     mpCamera2(nullptr)
 {
     // Frame ID
 	// Step 1 帧的ID 自增
@@ -329,12 +354,12 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
-#ifdef SAVE_TIMES
+#ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartExtORB = std::chrono::steady_clock::now();
 #endif
 	// Step 3 对这个单目图像进行提取特征点, 第一个参数0-左图， 1-右图
     ExtractORB(0,imGray,0,1000);
-#ifdef SAVE_TIMES
+#ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_EndExtORB = std::chrono::steady_clock::now();
 
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
@@ -532,6 +557,14 @@ void Frame::UpdatePoseMatrices()
 
     // mTcw 求逆后是当前相机坐标系变换到世界坐标系下，对应的光心变换到世界坐标系下就是 mTcw的逆 中对应的平移向量
     mOw = -mRcw.t()*mtcw;
+
+    // Static matrix
+    mOwx =  cv::Matx31f(mOw.at<float>(0), mOw.at<float>(1), mOw.at<float>(2));
+    mRcwx = cv::Matx33f(mRcw.at<float>(0,0), mRcw.at<float>(0,1), mRcw.at<float>(0,2),
+                        mRcw.at<float>(1,0), mRcw.at<float>(1,1), mRcw.at<float>(1,2),
+                        mRcw.at<float>(2,0), mRcw.at<float>(2,1), mRcw.at<float>(2,2));
+    mtcwx = cv::Matx31f(mtcw.at<float>(0), mtcw.at<float>(1), mtcw.at<float>(2));
+
 }
 
 cv::Mat Frame::GetImuPosition()
@@ -579,17 +612,17 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 
         // 3D in absolute coordinates
 		// Step 1 获得这个地图点的世界坐标
-        cv::Mat P = pMP->GetWorldPos();
+        cv::Matx31f Px = pMP->GetWorldPos2();
 
         // cout << "b";
 
         // 3D in camera coordinates
 		// 根据当前帧(粗糙)位姿转化到当前相机坐标系下的三维点Pc
-        const cv::Mat Pc = mRcw*P+mtcw;
+        const cv::Matx31f Pc = mRcwx * Px + mtcwx;
         const float Pc_dist = cv::norm(Pc);
 
         // Check positive depth
-        const float &PcZ = Pc.at<float>(2);
+        const float &PcZ = Pc(2);
         const float invz = 1.0f/PcZ;
     	// Step 2 关卡一：检查这个地图点在当前帧的相机坐标系下，是否有正的深度.如果是负的，表示出错，直接返回false
         if(PcZ<0.0f)
@@ -615,7 +648,7 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
         const float minDistance = pMP->GetMinDistanceInvariance();
     	// 得到当前地图点距离当前帧相机光心的距离,注意P，mOw都是在同一坐标系下才可以
     	//  mOw：当前相机光心在世界坐标系下坐标
-        const cv::Mat PO = P-mOw;
+        const cv::Matx31f PO = Px-mOwx;
 		//取模就得到了距离
         const float dist = cv::norm(PO);
 
@@ -627,11 +660,11 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 
         // Check viewing angle
     	// Step 5 关卡四：计算当前相机指向地图点向量和地图点的平均观测方向夹角的余弦值, 若小于cos(viewingCosLimit), 即夹角大于viewingCosLimit弧度则返回
-        cv::Mat Pn = pMP->GetNormal();
+        cv::Matx31f Pnx = pMP->GetNormal2();
 
         // cout << "f";
 		// 计算当前相机指向地图点向量和地图点的平均观测方向夹角的余弦值，注意平均观测方向为单位向量
-        const float viewCos = PO.dot(Pn)/dist;
+        const float viewCos = PO.dot(Pnx)/dist;
 
 		//如果大于给定的阈值 cos(60°)=0.5，认为这个点方向太偏了，重投影不可靠，返回false
         if(viewCos<viewingCosLimit)
@@ -1133,11 +1166,7 @@ void Frame::ComputeStereoMatches()
             const int w = 5;
             // 提取左图中，以特征点(scaleduL,scaledvL)为中心, 半径为w的图像快patch
             cv::Mat IL = mpORBextractorLeft->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduL-w,scaleduL+w+1);
-            //IL.convertTo(IL,CV_32F);
-            // 图像块均值归一化，降低亮度变化对相似度计算的影响
-            //IL = IL - IL.at<float>(w,w) *cv::Mat::ones(IL.rows,IL.cols,CV_32F);
-            IL.convertTo(IL,CV_16S);
-            IL = IL - IL.at<short>(w,w);
+
 			//初始化最佳相似度
             int bestDist = INT_MAX;
 			// 通过滑动窗口搜索优化，得到的列坐标偏移量
@@ -1163,11 +1192,7 @@ void Frame::ComputeStereoMatches()
             {
                 // 提取左图中，以特征点(scaleduL,scaledvL)为中心, 半径为w的图像快patch
                 cv::Mat IR = mpORBextractorRight->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduR0+incR-w,scaleduR0+incR+w+1);
-                //IR.convertTo(IR,CV_32F);
-                // 图像块均值归一化，降低亮度变化对相似度计算的影响
-                //IR = IR - IR.at<float>(w,w) *cv::Mat::ones(IR.rows,IR.cols,CV_32F);
-                IR.convertTo(IR,CV_16S);
-                IR = IR - IR.at<short>(w,w);
+
                 // sad 计算
                 float dist = cv::norm(IL,IR,cv::NORM_L1);
                 // 统计最小sad和偏移量
@@ -1316,10 +1341,8 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
         :mpcpi(NULL), mpORBvocabulary(voc),mpORBextractorLeft(extractorLeft),mpORBextractorRight(extractorRight), mTimeStamp(timeStamp), mK(K.clone()), mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
          mImuCalib(ImuCalib), mpImuPreintegrated(NULL), mpPrevFrame(pPrevF),mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbImuPreintegrated(false), mpCamera(pCamera), mpCamera2(pCamera2), mTlr(Tlr)
 {
-    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     imgLeft = imLeft.clone();
     imgRight = imRight.clone();
-    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
 
     // Frame ID
     mnId=nNextId++;
@@ -1334,11 +1357,18 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_StartExtORB = std::chrono::steady_clock::now();
+#endif
     thread threadLeft(&Frame::ExtractORB,this,0,imLeft,static_cast<KannalaBrandt8*>(mpCamera)->mvLappingArea[0],static_cast<KannalaBrandt8*>(mpCamera)->mvLappingArea[1]);
     thread threadRight(&Frame::ExtractORB,this,1,imRight,static_cast<KannalaBrandt8*>(mpCamera2)->mvLappingArea[0],static_cast<KannalaBrandt8*>(mpCamera2)->mvLappingArea[1]);
     threadLeft.join();
     threadRight.join();
-    std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_EndExtORB = std::chrono::steady_clock::now();
+
+    mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
+#endif
 
     Nleft = mvKeys.size();
     Nright = mvKeysRight.size();
@@ -1375,8 +1405,22 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
 
     cv::hconcat(Rrl,trl,mTrl);
 
+    mTrlx = cv::Matx34f(Rrl.at<float>(0,0), Rrl.at<float>(0,1), Rrl.at<float>(0,2), trl.at<float>(0),
+                        Rrl.at<float>(1,0), Rrl.at<float>(1,1), Rrl.at<float>(1,2), trl.at<float>(1),
+                        Rrl.at<float>(2,0), Rrl.at<float>(2,1), Rrl.at<float>(2,2), trl.at<float>(2));
+    mTlrx = cv::Matx34f(mRlr.at<float>(0,0), mRlr.at<float>(0,1), mRlr.at<float>(0,2), mtlr.at<float>(0),
+                        mRlr.at<float>(1,0), mRlr.at<float>(1,1), mRlr.at<float>(1,2), mtlr.at<float>(1),
+                        mRlr.at<float>(2,0), mRlr.at<float>(2,1), mRlr.at<float>(2,2), mtlr.at<float>(2));
+
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_StartStereoMatches = std::chrono::steady_clock::now();
+#endif
     ComputeStereoFishEyeMatches();
-    std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
+#ifdef REGISTER_TIMES
+    std::chrono::steady_clock::time_point time_EndStereoMatches = std::chrono::steady_clock::now();
+
+    mTimeStereoMatch = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndStereoMatches - time_StartStereoMatches).count();
+#endif
 
     //Put all descriptors in the same matrix
     cv::vconcat(mDescriptors,mDescriptorsRight,mDescriptors);
@@ -1385,25 +1429,10 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mvbOutlier = vector<bool>(N,false);
 
     AssignFeaturesToGrid();
-    std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
 
     mpMutexImu = new std::mutex();
 
     UndistortKeyPoints();
-    std::chrono::steady_clock::time_point t5 = std::chrono::steady_clock::now();
-
-    double t_read = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t1 - t0).count();
-    double t_orbextract = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t2 - t1).count();
-    double t_stereomatches = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t3 - t2).count();
-    double t_assign = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t4 - t3).count();
-    double t_undistort = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(t5 - t4).count();
-
-    /*cout << "Reading time: " << t_read << endl;
-    cout << "Extraction time: " << t_orbextract << endl;
-    cout << "Matching time: " << t_stereomatches << endl;
-    cout << "Assignment time: " << t_assign << endl;
-    cout << "Undistortion time: " << t_undistort << endl;*/
-
 }
 
 void Frame::ComputeStereoFishEyeMatches() {
@@ -1450,26 +1479,33 @@ void Frame::ComputeStereoFishEyeMatches() {
 
 bool Frame::isInFrustumChecks(MapPoint *pMP, float viewingCosLimit, bool bRight) {
     // 3D in absolute coordinates
-    cv::Mat P = pMP->GetWorldPos();
+    cv::Matx31f Px = pMP->GetWorldPos2();
 
-    cv::Mat mR, mt, twc;
+    cv::Matx33f mRx;
+    cv::Matx31f mtx, twcx;
+
+    cv::Matx33f Rcw = mRcwx;
+    cv::Matx33f Rwc = mRcwx.t();
+    cv::Matx31f tcw = mOwx;
+
     if(bRight){
-        cv::Mat Rrl = mTrl.colRange(0,3).rowRange(0,3);
-        cv::Mat trl = mTrl.col(3);
-        mR = Rrl * mRcw;
-        mt = Rrl * mtcw + trl;
-        twc = mRwc * mTlr.rowRange(0,3).col(3) + mOw;
+        cv::Matx33f Rrl = mTrlx.get_minor<3,3>(0,0);
+        cv::Matx31f trl = mTrlx.get_minor<3,1>(0,3);
+        mRx = Rrl * Rcw;
+        mtx = Rrl * tcw + trl;
+        twcx = Rwc * mTlrx.get_minor<3,1>(0,3) + tcw;
     }
     else{
-        mR = mRcw;
-        mt = mtcw;
-        twc = mOw;
+        mRx = mRcwx;
+        mtx = mtcwx;
+        twcx = mOwx;
     }
 
     // 3D in camera coordinates
-    cv::Mat Pc = mR*P+mt;
-    const float Pc_dist = cv::norm(Pc);
-    const float &PcZ = Pc.at<float>(2);
+
+    cv::Matx31f Pcx = mRx * Px + mtx;
+    const float Pc_dist = cv::norm(Pcx);
+    const float &PcZ = Pcx(2);
 
     // Check positive depth
     if(PcZ<0.0f)
@@ -1477,8 +1513,8 @@ bool Frame::isInFrustumChecks(MapPoint *pMP, float viewingCosLimit, bool bRight)
 
     // Project in image and check it is not outside
     cv::Point2f uv;
-    if(bRight) uv = mpCamera2->project(Pc);
-    else uv = mpCamera->project(Pc);
+    if(bRight) uv = mpCamera2->project(Pcx);
+    else uv = mpCamera->project(Pcx);
 
     if(uv.x<mnMinX || uv.x>mnMaxX)
         return false;
@@ -1488,16 +1524,16 @@ bool Frame::isInFrustumChecks(MapPoint *pMP, float viewingCosLimit, bool bRight)
     // Check distance is in the scale invariance region of the MapPoint
     const float maxDistance = pMP->GetMaxDistanceInvariance();
     const float minDistance = pMP->GetMinDistanceInvariance();
-    const cv::Mat PO = P-twc;
-    const float dist = cv::norm(PO);
+    const cv::Matx31f POx = Px - twcx;
+    const float dist = cv::norm(POx);
 
     if(dist<minDistance || dist>maxDistance)
         return false;
 
     // Check viewing angle
-    cv::Mat Pn = pMP->GetNormal();
+    cv::Matx31f Pnx = pMP->GetNormal2();
 
-    const float viewCos = PO.dot(Pn)/dist;
+    const float viewCos = POx.dot(Pnx)/dist;
 
     if(viewCos<viewingCosLimit)
         return false;

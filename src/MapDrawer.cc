@@ -186,14 +186,10 @@ void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const b
                 glLineWidth(mKeyFrameLineWidth*5);
                 glColor3f(1.0f,0.0f,0.0f);
                 glBegin(GL_LINES);
-
-                //cout << "Initial KF: " << mpAtlas->GetCurrentMap()->GetOriginKF()->mnId << endl;
-                //cout << "Parent KF: " << vpKFs[i]->mnId << endl;
             }
             else
             {
                 glLineWidth(mKeyFrameLineWidth);
-                //glColor3f(0.0f,0.0f,1.0f);
                 glColor3f(mfFrameColors[index_color][0],mfFrameColors[index_color][1],mfFrameColors[index_color][2]);
                 glBegin(GL_LINES);
             }
@@ -222,32 +218,6 @@ void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const b
 
             glPopMatrix();
 
-            //Draw lines with Loop and Merge candidates
-            /*glLineWidth(mGraphLineWidth);
-            glColor4f(1.0f,0.6f,0.0f,1.0f);
-            glBegin(GL_LINES);
-            cv::Mat Ow = pKF->GetCameraCenter();
-            const vector<KeyFrame*> vpLoopCandKFs = pKF->mvpLoopCandKFs;
-            if(!vpLoopCandKFs.empty())
-            {
-                for(vector<KeyFrame*>::const_iterator vit=vpLoopCandKFs.begin(), vend=vpLoopCandKFs.end(); vit!=vend; vit++)
-                {
-                    cv::Mat Ow2 = (*vit)->GetCameraCenter();
-                    glVertex3f(Ow.at<float>(0),Ow.at<float>(1),Ow.at<float>(2));
-                    glVertex3f(Ow2.at<float>(0),Ow2.at<float>(1),Ow2.at<float>(2));
-                }
-            }
-            const vector<KeyFrame*> vpMergeCandKFs = pKF->mvpMergeCandKFs;
-            if(!vpMergeCandKFs.empty())
-            {
-                for(vector<KeyFrame*>::const_iterator vit=vpMergeCandKFs.begin(), vend=vpMergeCandKFs.end(); vit!=vend; vit++)
-                {
-                    cv::Mat Ow2 = (*vit)->GetCameraCenter();
-                    glVertex3f(Ow.at<float>(0),Ow.at<float>(1),Ow.at<float>(2));
-                    glVertex3f(Ow2.at<float>(0),Ow2.at<float>(1),Ow2.at<float>(2));
-                }
-            }*/
-
             glEnd();
         }
     }
@@ -258,7 +228,6 @@ void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const b
         glColor4f(0.0f,1.0f,0.0f,0.6f);
         glBegin(GL_LINES);
 
-        // cout << "-----------------Draw graph-----------------" << endl;
         for(size_t i=0; i<vpKFs.size(); i++)
         {
             // Covisibility Graph
@@ -353,7 +322,6 @@ void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const b
                 else
                 {
                     glLineWidth(mKeyFrameLineWidth);
-                    //glColor3f(0.0f,0.0f,1.0f);
                     glColor3f(mfFrameColors[index_color][0],mfFrameColors[index_color][1],mfFrameColors[index_color][2]);
                     glBegin(GL_LINES);
                 }
