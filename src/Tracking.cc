@@ -3430,12 +3430,15 @@ bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);
     // Compute Bag of Words Vector
+    // Step 1: 计算当前帧特征点的Bow映射
     mCurrentFrame.ComputeBoW();
 
     // Relocalization is performed when tracking is lost
     // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
+    // Step 2：找到与当前帧相似的候选关键帧组
     vector<KeyFrame*> vpCandidateKFs = mpKeyFrameDB->DetectRelocalizationCandidates(&mCurrentFrame, mpAtlas->GetCurrentMap());
 
+    // 如果没有候选关键帧，则退出
     if(vpCandidateKFs.empty()) {
         Verbose::PrintMess("There are not candidates", Verbose::VERBOSITY_NORMAL);
         return false;
@@ -3447,17 +3450,22 @@ bool Tracking::Relocalization()
     // If enough matches are found we setup a PnP solver
     ORBmatcher matcher(0.75,true);
 
+    // 每个关键帧的解算器
     vector<MLPnPsolver*> vpMLPnPsolvers;
     vpMLPnPsolvers.resize(nKFs);
 
+    // 每个关键帧和当前帧中特征点的匹配关系
     vector<vector<MapPoint*> > vvpMapPointMatches;
     vvpMapPointMatches.resize(nKFs);
 
+    // 放弃某个关键帧的标记  
     vector<bool> vbDiscarded;
     vbDiscarded.resize(nKFs);
 
+    // 有效的候选关键帧数目
     int nCandidates=0;
 
+    // Step 3：遍历所有的候选关键帧，通过BoW进行快速匹配，用匹配结果初始化PnP Solver
     for(int i=0; i<nKFs; i++)
     {
         KeyFrame* pKF = vpCandidateKFs[i];
@@ -3465,6 +3473,7 @@ bool Tracking::Relocalization()
             vbDiscarded[i] = true;
         else
         {
+            // 当前帧和候选关键帧用BoW进行快速匹配，匹配结果记录在vvpMapPointMatches，nmatches表示匹配的数目
             int nmatches = matcher.SearchByBoW(pKF,mCurrentFrame,vvpMapPointMatches[i]);
             if(nmatches<15)
             {
@@ -3473,8 +3482,18 @@ bool Tracking::Relocalization()
             }
             else
             {
+                // 如果匹配数目够用，用匹配结果初始化MLPnPsolver
+                // ? 为什么用MLPnP? 因为考虑了鱼眼相机模型，解耦某些关系？
+                // 参考论文《MLPNP-A REAL-TIME MAXIMUM LIKELIHOOD SOLUTION TO THE PERSPECTIVE-N-POINT PROBLEM》
                 MLPnPsolver* pSolver = new MLPnPsolver(mCurrentFrame,vvpMapPointMatches[i]);
-                pSolver->SetRansacParameters(0.99,10,300,6,0.5,5.991);  //This solver needs at least 6 points
+                // 构造函数调用了一遍，这里重新设置参数
+                pSolver->SetRansacParameters(
+                    0.99,                    // 模型最大概率值，默认0.9
+                    10,                      // 内点的最小阈值，默认8
+                    300,                     // 最大迭代次数，默认300
+                    6,                       // 最小集，每次采样六个点，即最小集应该设置为6，论文里面写着I > 5
+                    0.5,                     // 理论最少内点个数，这里是按照总数的比例计算，所以epsilon是比例，默认是0.4
+                    5.991);                  // 卡方检验阈值 //This solver needs at least 6 points
                 vpMLPnPsolvers[i] = pSolver;
             }
         }
@@ -3482,9 +3501,13 @@ bool Tracking::Relocalization()
 
     // Alternatively perform some iterations of P4P RANSAC
     // Until we found a camera pose supported by enough inliers
+    // 足够的内点才能匹配使用PNP算法，MLPnP需要至少6个点
+    // 是否已经找到相匹配的关键帧的标志
     bool bMatch = false;
     ORBmatcher matcher2(0.9,true);
 
+    // Step 4: 通过一系列操作,直到找到能够匹配上的关键帧
+    // 为什么搞这么复杂？答：是担心误闭环
     while(nCandidates>0 && !bMatch)
     {
         for(int i=0; i<nKFs; i++)
@@ -3493,14 +3516,22 @@ bool Tracking::Relocalization()
                 continue;
 
             // Perform 5 Ransac Iterations
+            // 内点标记
             vector<bool> vbInliers;
+
+            // 内点数
             int nInliers;
+
+            // 表示RANSAC已经没有更多的迭代次数可用 -- 也就是说数据不够好，RANSAC也已经尽力了。。。
             bool bNoMore;
 
+            // Step 4.1：通过MLPnP算法估计姿态，迭代5次
             MLPnPsolver* pSolver = vpMLPnPsolvers[i];
+            // PnP算法的入口函数
             cv::Mat Tcw = pSolver->iterate(5,bNoMore,vbInliers,nInliers);
 
             // If Ransac reachs max. iterations discard keyframe
+            // bNoMore 为true 表示已经超过了RANSAC最大迭代次数，就放弃当前关键帧
             if(bNoMore)
             {
                 vbDiscarded[i]=true;
@@ -3510,12 +3541,15 @@ bool Tracking::Relocalization()
             // If a Camera Pose is computed, optimize
             if(!Tcw.empty())
             {
+                // Step 4.2：如果MLPnP 计算出了位姿，对内点进行BA优化
                 Tcw.copyTo(mCurrentFrame.mTcw);
 
+                // MLPnP 里RANSAC后的内点的集合
                 set<MapPoint*> sFound;
 
                 const int np = vbInliers.size();
 
+                // 遍历所有内点
                 for(int j=0; j<np; j++)
                 {
                     if(vbInliers[j])
@@ -3527,43 +3561,66 @@ bool Tracking::Relocalization()
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
 
+                // 只优化位姿,不优化地图点的坐标，返回的是内点的数量
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
+                // 如果优化之后的内点数目不多，跳过了当前候选关键帧,但是却没有放弃当前帧的重定位
                 if(nGood<10)
                     continue;
 
+                // 删除外点对应的地图点,这里直接设为空指针
                 for(int io =0; io<mCurrentFrame.N; io++)
                     if(mCurrentFrame.mvbOutlier[io])
                         mCurrentFrame.mvpMapPoints[io]=static_cast<MapPoint*>(NULL);
 
                 // If few inliers, search by projection in a coarse window and optimize again
+                // Step 4.3：如果内点较少，则通过投影的方式对之前未匹配的点进行匹配，再进行优化求解
+                // 前面的匹配关系是用词袋匹配过程得到的
                 if(nGood<50)
                 {
-                    int nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
+                    // 通过投影的方式将关键帧中未匹配的地图点投影到当前帧中, 生成新的匹配
+                    int nadditional =matcher2.SearchByProjection(
+                        mCurrentFrame,           // 当前帧
+                        vpCandidateKFs[i],       // 关键帧
+                        sFound,                  // 已经找到的地图点集合，不会用于PNP
+                        10,                      // 窗口阈值，会乘以金字塔尺度
+                        100);                    // 匹配的ORB描述子距离应该小于这个阈值
 
                     if(nadditional+nGood>=50)
                     {
+                        // 根据投影匹配的结果，再次采用3D-2D pnp BA优化位姿
                         nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
                         // If many inliers but still not enough, search by projection again in a narrower window
                         // the camera has been already optimized with many points
+                        // Step 4.4：如果BA后内点数还是比较少(<50)但是还不至于太少(>30)，可以挽救一下, 最后垂死挣扎 
+                        // 重新执行上一步 4.3的过程，只不过使用更小的搜索窗口
+                        // 这里的位姿已经使用了更多的点进行了优化,应该更准，所以使用更小的窗口搜索
                         if(nGood>30 && nGood<50)
                         {
+                            // 用更小窗口、更严格的描述子阈值，重新进行投影搜索匹配
                             sFound.clear();
                             for(int ip =0; ip<mCurrentFrame.N; ip++)
                                 if(mCurrentFrame.mvpMapPoints[ip])
                                     sFound.insert(mCurrentFrame.mvpMapPoints[ip]);
-                            nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
+                            nadditional =matcher2.SearchByProjection(
+                                mCurrentFrame,              // 当前帧
+                                vpCandidateKFs[i],          // 候选的关键帧
+                                sFound,                     // 已经找到的地图点，不会用于PNP
+                                3,                          // 新的窗口阈值，会乘以金字塔尺度
+                                64);                        // 匹配的ORB描述子距离应该小于这个阈值
 
                             // Final optimization
+                            // 如果成功挽救回来，匹配数目达到要求，最后BA优化一下
                             if(nGood+nadditional>=50)
                             {
                                 nGood = Optimizer::PoseOptimization(&mCurrentFrame);
-
+                                //更新地图点
                                 for(int io =0; io<mCurrentFrame.N; io++)
                                     if(mCurrentFrame.mvbOutlier[io])
                                         mCurrentFrame.mvpMapPoints[io]=NULL;
                             }
+                            //如果还是不能够满足就放弃了
                         }
                     }
                 }
@@ -3573,6 +3630,7 @@ bool Tracking::Relocalization()
                 if(nGood>=50)
                 {
                     bMatch = true;
+                    // 只要有一个候选关键帧重定位成功，就退出循环，不考虑其他候选关键帧了
                     break;
                 }
             }
