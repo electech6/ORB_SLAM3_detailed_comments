@@ -336,6 +336,13 @@ public:
     }
 };
 
+/** 
+ * @brief 视觉重投影的边
+ * 这里或许会有疑问，OptimizableTypes.h 里面不是定义了视觉重投影的边么？
+ * 原因是这样，那里面定义的边也用，不过只是在纯视觉时，没有imu情况下，因为用已经定义好的节点就好
+ * 但是加入imu时，优化要有残差的边与重投影的边同时存在，且两个边可能连接同一个位姿节点，所以需要重新弄一个包含imu位姿的节点
+ * 因此，边也需要重新写，并且在imu优化时使用这个边
+ */
 class EdgeMono : public g2o::BaseBinaryEdge<2,Eigen::Vector2d,g2o::VertexSBAPointXYZ,VertexPose>
 {
 public:
@@ -489,6 +496,7 @@ public:
     const int cam_idx;
 };
 
+// TO COMMENT
 class EdgeInertial : public g2o::BaseMultiEdge<9,Vector9d>
 {
 public:
@@ -858,6 +866,6 @@ public:
     Eigen::Vector3d dtij;
 };
 
-} //namespace ORB_SLAM2
+} //namespace ORB_SLAM3
 
 #endif // G2OTYPES_H

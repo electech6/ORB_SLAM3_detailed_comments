@@ -64,9 +64,9 @@ int main(int argc, char **argv)
     vector< vector<double> > vTimestampsCam;        //图像时间戳
     vector< vector<cv::Point3f> > vAcc, vGyro;      //加速度计，陀螺仪
     vector< vector<double> > vTimestampsImu;        //IMU时间戳
-    vector<int> nImages;                            
+    vector<int> nImages;                            //图像序列    
     vector<int> nImu;
-    vector<int> first_imu(num_seq,0);
+    vector<int> first_imu(num_seq,0);               //记录和第一帧图像时间戳最接近的imu时间戳索引
 
     vstrImageFilenames.resize(num_seq);
     vTimestampsCam.resize(num_seq);
@@ -168,13 +168,16 @@ int main(int argc, char **argv)
             {
                 // cout << "t_cam " << tframe << endl;
                 // Step 6 把上一图像帧和当前图像帧之间的imu信息存储在vImuMeas里
-                // 注意第一个图像帧没有对应的imu数据 //?是否存在一帧,因为之前是从最接近图像第一帧的imu算起,可能无效
+                // 注意第一个图像帧没有对应的imu数据 
+                // seq: 数据集序列索引；first_imu[seq]：当前数据集中和当前帧图像最接近的imu时间戳索引；ni：图像的索引
                 while(vTimestampsImu[seq][first_imu[seq]]<=vTimestampsCam[seq][ni])
                 {
+                    // 存储IMU的加速度计信息vAcc、陀螺仪信息vGyro、时间戳信息vTimestampsImu
                     vImuMeas.push_back(ORB_SLAM3::IMU::Point(vAcc[seq][first_imu[seq]].x,vAcc[seq][first_imu[seq]].y,vAcc[seq][first_imu[seq]].z,
                                                              vGyro[seq][first_imu[seq]].x,vGyro[seq][first_imu[seq]].y,vGyro[seq][first_imu[seq]].z,
                                                              vTimestampsImu[seq][first_imu[seq]]));
                     // cout << "t_imu = " << fixed << vImuMeas.back().t << endl;
+                    // 更新
                     first_imu[seq]++;
                 }
             }

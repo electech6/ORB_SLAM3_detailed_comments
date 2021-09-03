@@ -45,7 +45,9 @@ namespace ORB_SLAM3 {
         return os.good();
     }
 
-
+/** 
+ * @brief 求解二维像素坐标关于位姿的雅克比矩阵 _jacobianOplusXi
+ */
     void EdgeSE3ProjectXYZOnlyPose::linearizeOplus() {
         g2o::VertexSE3Expmap * vi = static_cast<g2o::VertexSE3Expmap *>(_vertices[0]);
         Eigen::Vector3d xyz_trans = vi->estimate().map(Xw);
@@ -88,7 +90,11 @@ namespace ORB_SLAM3 {
         return os.good();
     }
 
+/** 
+ * @brief 求解右目的二维像素坐标关于左目位姿的雅克比矩阵 _jacobianOplusXi
+ */
     void EdgeSE3ProjectXYZOnlyPoseToBody::linearizeOplus() {
+    // 获得三维点在右相机坐标系下的坐标
         g2o::VertexSE3Expmap * vi = static_cast<g2o::VertexSE3Expmap *>(_vertices[0]);
         g2o::SE3Quat T_lw(vi->estimate());
         Eigen::Vector3d X_l = T_lw.map(Xw);
@@ -103,6 +109,12 @@ namespace ORB_SLAM3 {
                 -z_w , 0.f, x_w, 0.f, 1.f, 0.f,
                 y_w ,  -x_w , 0.f, 0.f, 0.f, 1.f;
 
+    /*
+        注意这里是对李代数求导，ρlw != tlw 所以不能使用Pl = Rlw*Pw + tlw
+        Pl = EXP(ξlw)*Pw    Pr = Rrl * EXP(ξlw) * Pw + trl  
+        让Pr 对 ξlw 求雅克比
+        相当于Rrl*(Pl 对 ξlw的雅克比)
+     */
         _jacobianOplusXi = -pCamera->projectJac(X_r) * mTrl.rotation().toRotationMatrix() * SE3deriv;
     }
 
@@ -135,7 +147,9 @@ namespace ORB_SLAM3 {
         return os.good();
     }
 
-
+/** 
+ * @brief 求解二维像素坐标关于位姿的雅克比矩阵 _jacobianOplusXj  二维像素坐标关于三维点世界坐标的雅克比矩阵 _jacobianOplusXi  
+ */
     void EdgeSE3ProjectXYZ::linearizeOplus() {
         g2o::VertexSE3Expmap * vj = static_cast<g2o::VertexSE3Expmap *>(_vertices[1]);
         g2o::SE3Quat T(vj->estimate());
@@ -148,7 +162,7 @@ namespace ORB_SLAM3 {
         double z = xyz_trans[2];
 
         auto projectJac = -pCamera->projectJac(xyz_trans);
-
+    // Pc = Rcw*Pw + tcw  先求Pw改变对Pc的影响，所以直接为Rcw，前面再乘Pc对像素的影响
         _jacobianOplusXi =  projectJac * T.rotation().toRotationMatrix();
 
         Eigen::Matrix<double,3,6> SE3deriv;
@@ -188,7 +202,9 @@ namespace ORB_SLAM3 {
         return os.good();
     }
 
-
+/** 
+ * @brief 求解右目二维像素坐标关于位姿的雅克比矩阵 _jacobianOplusXj  右目二维像素坐标关于三维点世界坐标的雅克比矩阵 _jacobianOplusXi  
+ */
     void EdgeSE3ProjectXYZToBody::linearizeOplus() {
         g2o::VertexSE3Expmap * vj = static_cast<g2o::VertexSE3Expmap *>(_vertices[1]);
         g2o::SE3Quat T_lw(vj->estimate());
@@ -208,7 +224,12 @@ namespace ORB_SLAM3 {
         SE3deriv << 0.f, z,   -y, 1.f, 0.f, 0.f,
                 -z , 0.f, x, 0.f, 1.f, 0.f,
                 y ,  -x , 0.f, 0.f, 0.f, 1.f;
-
+    /*
+        注意这里是对李代数求导，ρlw != tlw 所以不能使用Pl = Rlw*Pw + tlw
+        Pl = EXP(ξlw)*Pw    Pr = Rrl * EXP(ξlw) * Pw + trl  
+        让Pr 对 ξlw 求雅克比
+        相当于Rrl*(Pl 对 ξlw的雅克比)
+     */
         _jacobianOplusXj = -pCamera->projectJac(X_r) * mTrl.rotation().toRotationMatrix() * SE3deriv;
     }
 

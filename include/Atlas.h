@@ -50,7 +50,7 @@ public:
     Atlas();
     Atlas(int initKFid); // When its initialization the first map is created
     ~Atlas();
-
+    // 创建新地图
     void CreateNewMap();
     void ChangeMap(Map* pMap);
 
@@ -107,7 +107,7 @@ public:
 
 protected:
 
-    std::set<Map*> mspMaps;
+    std::set<Map*> mspMaps;     //存放所有的地图
     std::set<Map*> mspBadMaps;
     Map* mpCurrentMap;
 

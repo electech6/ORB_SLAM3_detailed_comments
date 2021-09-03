@@ -27,6 +27,11 @@ namespace IMU
 
 const float eps = 1e-4;
 
+/** 
+ * @brief 强制让R变成一个正交矩阵
+ * @param R 待优化的旋转矩阵
+ * @return 优化后的矩阵
+ */
 cv::Mat NormalizeRotation(const cv::Mat &R)
 {
     cv::Mat U,w,Vt;
@@ -34,6 +39,11 @@ cv::Mat NormalizeRotation(const cv::Mat &R)
     return U*Vt;
 }
 
+/** 
+ * @brief 计算反对称矩阵
+ * @param v 3维向量
+ * @return 反对称矩阵
+ */
 cv::Mat Skew(const cv::Mat &v)
 {
     const float x = v.at<float>(0);
@@ -44,6 +54,11 @@ cv::Mat Skew(const cv::Mat &v)
             -y,  x, 0);
 }
 
+/** 
+ * @brief 计算SO3
+ * @param xyz 李代数
+ * @return SO3
+ */
 cv::Mat ExpSO3(const float &x, const float &y, const float &z)
 {
     cv::Mat I = cv::Mat::eye(3,3,CV_32F);
@@ -58,6 +73,11 @@ cv::Mat ExpSO3(const float &x, const float &y, const float &z)
         return (I + W*sin(d)/d + W*W*(1.0f-cos(d))/d2);
 }
 
+/** 
+ * @brief 计算SO3
+ * @param xyz 李代数
+ * @return SO3
+ */
 Eigen::Matrix<double,3,3> ExpSO3(const double &x, const double &y, const double &z)
 {
     Eigen::Matrix<double,3,3> I = Eigen::MatrixXd::Identity(3,3);
@@ -80,11 +100,21 @@ Eigen::Matrix<double,3,3> ExpSO3(const double &x, const double &y, const double 
         return (I + W*sin(d)/d + W*W*(1.0-cos(d))/d2);
 }
 
+/** 
+ * @brief 计算SO3
+ * @param v 李代数
+ * @return SO3
+ */
 cv::Mat ExpSO3(const cv::Mat &v)
 {
     return ExpSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
 }
 
+/** 
+ * @brief 计算so3
+ * @param R SO3
+ * @return so3
+ */
 cv::Mat LogSO3(const cv::Mat &R)
 {
     const float tr = R.at<float>(0,0)+R.at<float>(1,1)+R.at<float>(2,2);
@@ -102,6 +132,11 @@ cv::Mat LogSO3(const cv::Mat &R)
         return theta*w/s;
 }
 
+/** 
+ * @brief 计算右雅可比
+ * @param xyz 李代数
+ * @return Jr
+ */
 cv::Mat RightJacobianSO3(const float &x, const float &y, const float &z)
 {
     cv::Mat I = cv::Mat::eye(3,3,CV_32F);
@@ -120,11 +155,21 @@ cv::Mat RightJacobianSO3(const float &x, const float &y, const float &z)
     }
 }
 
+/** 
+ * @brief 计算右雅可比
+ * @param v so3
+ * @return Jr
+ */
 cv::Mat RightJacobianSO3(const cv::Mat &v)
 {
     return RightJacobianSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
 }
 
+/** 
+ * @brief 计算右雅可比的逆
+ * @param xyz so3
+ * @return Jr^-1
+ */
 cv::Mat InverseRightJacobianSO3(const float &x, const float &y, const float &z)
 {
     cv::Mat I = cv::Mat::eye(3,3,CV_32F);
@@ -143,6 +188,11 @@ cv::Mat InverseRightJacobianSO3(const float &x, const float &y, const float &z)
     }
 }
 
+/** 
+ * @brief 计算右雅可比的逆
+ * @param v so3
+ * @return Jr^-1
+ */
 cv::Mat InverseRightJacobianSO3(const cv::Mat &v)
 {
     return InverseRightJacobianSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
@@ -190,6 +240,11 @@ IntegratedRotation::IntegratedRotation(const cv::Point3f &angVel, const Bias &im
     }
 }
 
+/** 
+ * @brief 预积分类构造函数，根据输入的偏置初始化预积分参数
+ * @param b_ 偏置
+ * @param calib imu标定参数的类
+ */
 Preintegrated::Preintegrated(const Bias &b_, const Calib &calib)
 {
     Nga = calib.Cov.clone();
@@ -206,6 +261,10 @@ Preintegrated::Preintegrated(Preintegrated* pImuPre): dT(pImuPre->dT), C(pImuPre
 
 }
 
+/** 
+ * @brief 复制上一帧的预积分
+ * @param pImuPre 上一帧的预积分
+ */
 void Preintegrated::CopyFrom(Preintegrated* pImuPre)
 {
     std::cout << "Preintegrated: start clone" << std::endl;
@@ -219,6 +278,7 @@ void Preintegrated::CopyFrom(Preintegrated* pImuPre)
     dR = pImuPre->dR.clone();
     dV = pImuPre->dV.clone();
     dP = pImuPre->dP.clone();
+    // 旋转关于陀螺仪偏置变化的雅克比，以此类推
     JRg = pImuPre->JRg.clone();
     JVg = pImuPre->JVg.clone();
     JVa = pImuPre->JVa.clone();
@@ -234,28 +294,34 @@ void Preintegrated::CopyFrom(Preintegrated* pImuPre)
     std::cout << "Preintegrated: end clone" << std::endl;
 }
 
-
+/** 
+ * @brief 初始化预积分
+ * @param b_ 偏置
+ */
 void Preintegrated::Initialize(const Bias &b_)
 {
-    dR = cv::Mat::eye(3,3,CV_32F);
-    dV = cv::Mat::zeros(3,1,CV_32F);
-    dP = cv::Mat::zeros(3,1,CV_32F);
-    JRg = cv::Mat::zeros(3,3,CV_32F);
-    JVg = cv::Mat::zeros(3,3,CV_32F);
-    JVa = cv::Mat::zeros(3,3,CV_32F);
-    JPg = cv::Mat::zeros(3,3,CV_32F);
-    JPa = cv::Mat::zeros(3,3,CV_32F);
-    C = cv::Mat::zeros(15,15,CV_32F);
-    Info=cv::Mat();
-    db = cv::Mat::zeros(6,1,CV_32F);
-    b=b_;
-    bu=b_;
-    avgA = cv::Mat::zeros(3,1,CV_32F);
-    avgW = cv::Mat::zeros(3,1,CV_32F);
-    dT=0.0f;
-    mvMeasurements.clear();
+    dR = cv::Mat::eye(3, 3, CV_32F);
+    dV = cv::Mat::zeros(3, 1, CV_32F);
+    dP = cv::Mat::zeros(3, 1, CV_32F);
+    JRg = cv::Mat::zeros(3, 3, CV_32F);
+    JVg = cv::Mat::zeros(3, 3, CV_32F);
+    JVa = cv::Mat::zeros(3, 3, CV_32F);
+    JPg = cv::Mat::zeros(3, 3, CV_32F);
+    JPa = cv::Mat::zeros(3, 3, CV_32F);
+    C = cv::Mat::zeros(15, 15, CV_32F);
+    Info = cv::Mat();
+    db = cv::Mat::zeros(6, 1, CV_32F);
+    b = b_;
+    bu = b_;  // 更新后的偏置
+    avgA = cv::Mat::zeros(3, 1, CV_32F);  // 平均加速度
+    avgW = cv::Mat::zeros(3, 1, CV_32F);  // 平均角速度
+    dT = 0.0f;
+    mvMeasurements.clear();  // 存放imu数据及dt
 }
 
+/** 
+ * @brief 根据新的偏置重新积分mvMeasurements里的数据 Optimizer::InertialOptimization调用
+ */ 
 void Preintegrated::Reintegrate()
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -299,8 +365,8 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
     
     // Update delta position dP and velocity dV (rely on no-updated delta rotation)
     // 根据没有更新的dR来更新dP与dV  eq.(38)
-    dP = dP + dV*dt + 0.5f*dR*acc*dt*dt;
-    dV = dV + dR*acc*dt;
+    dP = dP + dV*dt + 0.5f*dR*acc*dt*dt;	// 对应viorb论文的公式（2）的第三个，位移积分
+    dV = dV + dR*acc*dt;					// 对应viorb论文的公式（2）的第二个，速度积分
 
     // Compute velocity and position parts of matrices A and B (rely on non-updated delta rotation)
     // 根据η_ij = A * η_i,j-1 + B_j-1 * η_j-1中的Ａ矩阵和Ｂ矩阵对速度和位移进行更新
@@ -335,9 +401,9 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
     // 小量delta初始为0，更新后通常也为0，故省略了小量的更新
     // Update covariance
     // Step 3.更新协方差，frost经典预积分论文的第63个公式，推导了噪声（ηa, ηg）对dR dV dP 的影响
-    C.rowRange(0,9).colRange(0,9) = A*C.rowRange(0,9).colRange(0,9)*A.t() + B*Nga*B.t();
+    C.rowRange(0,9).colRange(0,9) = A*C.rowRange(0,9).colRange(0,9)*A.t() + B*Nga*B.t(); 	// B矩阵为9*6矩阵 Nga 6*6对角矩阵，3个陀螺仪噪声的平方，3个加速度计噪声的平方
     // 这一部分最开始是0矩阵，随着积分次数增加，每次都加上随机游走，偏置的信息矩阵
-    C.rowRange(9,15).colRange(9,15) = C.rowRange(9,15).colRange(9,15) + NgaWalk;
+    C.rowRange(9,15).colRange(9,15) = C.rowRange(9,15).colRange(9,15) + NgaWalk;	// NgaWalk 6*6 随机游走对角矩阵
 
     // Update rotation jacobian wrt bias correction
     // 计算偏置的雅克比矩阵，r对bg的导数，∂ΔRij/∂bg = (ΔRjj-1) * ∂ΔRij-1/∂bg - Jr(j-1)*t
@@ -350,6 +416,10 @@ void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, con
     dT += dt;
 }
 
+/** 
+ * @brief 融合两个预积分，发生在删除关键帧的时候，3帧变2帧，需要把两段预积分融合
+ * @param pPrev 前面的预积分
+ */
 void Preintegrated::MergePrevious(Preintegrated* pPrev)
 {
     if (pPrev==this)
@@ -376,6 +446,10 @@ void Preintegrated::MergePrevious(Preintegrated* pPrev)
 
 }
 
+/** 
+ * @brief 更新偏置
+ * @param bu_ 偏置
+ */
 void Preintegrated::SetNewBias(const Bias &bu_)
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -389,12 +463,22 @@ void Preintegrated::SetNewBias(const Bias &bu_)
     db.at<float>(5) = bu_.baz-b.baz;
 }
 
+/** 
+ * @brief 获得当前偏置与输入偏置的改变量
+ * @param b_ 偏置
+ * @return 改变量
+ */
 IMU::Bias Preintegrated::GetDeltaBias(const Bias &b_)
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return IMU::Bias(b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz,b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
 }
 
+/** 
+ * @brief 根据新的偏置计算新的dR
+ * @param b_ 新的偏置
+ * @return dR
+ */
 cv::Mat Preintegrated::GetDeltaRotation(const Bias &b_)
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -405,6 +489,11 @@ cv::Mat Preintegrated::GetDeltaRotation(const Bias &b_)
     return NormalizeRotation(dR*ExpSO3(JRg*dbg));
 }
 
+/** 
+ * @brief 根据新的偏置计算新的dV
+ * @param b_ 新的偏置
+ * @return dV
+ */
 cv::Mat Preintegrated::GetDeltaVelocity(const Bias &b_)
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -414,6 +503,11 @@ cv::Mat Preintegrated::GetDeltaVelocity(const Bias &b_)
     return dV + JVg*dbg + JVa*dba;
 }
 
+/** 
+ * @brief 根据新的偏置计算新的dP
+ * @param b_ 新的偏置
+ * @return dP
+ */
 cv::Mat Preintegrated::GetDeltaPosition(const Bias &b_)
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -423,61 +517,101 @@ cv::Mat Preintegrated::GetDeltaPosition(const Bias &b_)
     return dP + JPg*dbg + JPa*dba;
 }
 
+/** 
+ * @brief 返回经过db(δba, δbg)更新后的dR,与上面是一个意思
+ * @return dR
+ */
 cv::Mat Preintegrated::GetUpdatedDeltaRotation()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return NormalizeRotation(dR*ExpSO3(JRg*db.rowRange(0,3)));
 }
 
+/** 
+ * @brief 返回经过db(δba, δbg)更新后的dV,与上面是一个意思
+ * @return dV
+ */
 cv::Mat Preintegrated::GetUpdatedDeltaVelocity()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return dV + JVg*db.rowRange(0,3) + JVa*db.rowRange(3,6);
 }
 
+/** 
+ * @brief 返回经过db(δba, δbg)更新后的dP,与上面是一个意思
+ * @return dP
+ */
 cv::Mat Preintegrated::GetUpdatedDeltaPosition()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return dP + JPg*db.rowRange(0,3) + JPa*db.rowRange(3,6);
 }
 
+/** 
+ * @brief 获取dR
+ * @return dR
+ */
 cv::Mat Preintegrated::GetOriginalDeltaRotation()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return dR.clone();
 }
 
+/** 
+ * @brief 获取dV
+ * @return dV
+ */
 cv::Mat Preintegrated::GetOriginalDeltaVelocity()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return dV.clone();
 }
 
+/** 
+ * @brief 获取dP
+ * @return dP
+ */
 cv::Mat Preintegrated::GetOriginalDeltaPosition()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return dP.clone();
 }
 
+/** 
+ * @brief 获取b,更新前的偏置
+ * @return b
+ */
 Bias Preintegrated::GetOriginalBias()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return b;
 }
 
+/** 
+ * @brief 获取bu,更新后的偏置
+ * @return bu
+ */
 Bias Preintegrated::GetUpdatedBias()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return bu;
 }
 
+/** 
+ * @brief 获取db,更新前后的偏置差
+ * @return db
+ */
 cv::Mat Preintegrated::GetDeltaBias()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     return db.clone();
 }
 
-Eigen::Matrix<double,15,15> Preintegrated::GetInformationMatrix()
+/** 
+ * @brief 获取信息矩阵，没有用到，也就是C矩阵,其中9~15每个元素取倒数，
+ * @return 信息矩阵
+ */
+Eigen::Matrix<double, 15, 15> Preintegrated::GetInformationMatrix()
 {
     std::unique_lock<std::mutex> lock(mMutex);
     if(Info.empty())
@@ -495,6 +629,10 @@ Eigen::Matrix<double,15,15> Preintegrated::GetInformationMatrix()
     return EI;
 }
 
+/** 
+ * @brief 赋值新的偏置
+ * @param b 偏置
+ */
 void Bias::CopyFrom(Bias &b)
 {
     bax = b.bax;
@@ -529,21 +667,34 @@ std::ostream& operator<< (std::ostream &out, const Bias &b)
     return out;
 }
 
+/** 
+ * @brief 设置参数
+ * @param Tbc_ 位姿变换
+ * @param ng 噪声
+ * @param na 噪声
+ * @param ngw 随机游走
+ * @param naw 随机游走
+ */
 void Calib::Set(const cv::Mat &Tbc_, const float &ng, const float &na, const float &ngw, const float &naw)
 {
     Tbc = Tbc_.clone();
     Tcb = cv::Mat::eye(4,4,CV_32F);
     Tcb.rowRange(0,3).colRange(0,3) = Tbc.rowRange(0,3).colRange(0,3).t();
     Tcb.rowRange(0,3).col(3) = -Tbc.rowRange(0,3).colRange(0,3).t()*Tbc.rowRange(0,3).col(3);
+	
+	// 噪声协方差
     Cov = cv::Mat::eye(6,6,CV_32F);
     const float ng2 = ng*ng;
     const float na2 = na*na;
+	
     Cov.at<float>(0,0) = ng2;
     Cov.at<float>(1,1) = ng2;
     Cov.at<float>(2,2) = ng2;
     Cov.at<float>(3,3) = na2;
     Cov.at<float>(4,4) = na2;
     Cov.at<float>(5,5) = na2;
+	
+	// 随机游走协方差
     CovWalk = cv::Mat::eye(6,6,CV_32F);
     const float ngw2 = ngw*ngw;
     const float naw2 = naw*naw;
@@ -555,6 +706,10 @@ void Calib::Set(const cv::Mat &Tbc_, const float &ng, const float &na, const flo
     CovWalk.at<float>(5,5) = naw2;
 }
 
+/** 
+ * @brief imu标定参数的构造函数
+ * @param calib imu标定参数
+ */
 Calib::Calib(const Calib &calib)
 {
     Tbc = calib.Tbc.clone();
@@ -565,4 +720,4 @@ Calib::Calib(const Calib &calib)
 
 } //namespace IMU
 
-} //namespace ORB_SLAM2
+} //namespace ORB_SLAM3

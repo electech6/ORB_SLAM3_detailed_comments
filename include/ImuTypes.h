@@ -280,6 +280,6 @@ cv::Mat NormalizeRotation(const cv::Mat &R);
 
 }
 
-} //namespace ORB_SLAM2
+} //namespace ORB_SLAM3
 
 #endif // IMUTYPES_H

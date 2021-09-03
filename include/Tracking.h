@@ -109,9 +109,9 @@ public:
         NO_IMAGES_YET=0,                //当前无图像
         NOT_INITIALIZED=1,              //有图像但是没有完成初始化
         OK=2,                           //正常跟踪状态
-        RECENTLY_LOST=3,                //IMU模式：当前地图中的KF>10,且丢失时间<5秒。纯视觉模式没有该状态
+        RECENTLY_LOST=3,                //IMU模式：当前地图中的KF>10,且丢失时间<5秒。纯视觉模式：没有该状态
         LOST=4,                         //IMU模式：当前帧跟丢超过5s。纯视觉模式：重定位失败
-        OK_KLT=5
+        OK_KLT=5                        //未使用
     };
 
     eTrackingState mState;

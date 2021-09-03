@@ -55,15 +55,23 @@ Atlas::~Atlas()
     }
 }
 
+/**
+ * @brief 创建新地图，如果当前活跃地图有效，先存储当前地图为不活跃地图，然后新建地图；否则，可以直接新建地图。
+ * 
+ */
 void Atlas::CreateNewMap()
 {
+    // 锁住地图集
     unique_lock<mutex> lock(mMutexAtlas);
     cout << "Creation of new map with id: " << Map::nNextId << endl;
+
+    // 如果当前活跃地图有效，先存储当前地图为不活跃地图后退出
     if(mpCurrentMap){
         cout << "Exits current map " << endl;
+        // mnLastInitKFidMap为当前地图创建时第1个关键帧的id，它是在上一个地图最大关键帧id的基础上增加1
         if(!mspMaps.empty() && mnLastInitKFidMap < mpCurrentMap->GetMaxKFid())
             mnLastInitKFidMap = mpCurrentMap->GetMaxKFid()+1; //The init KF is the next of current maximum
-
+        // 将当前地图储存起来，其实就是把mIsInUse标记为false
         mpCurrentMap->SetStoredMap();
         cout << "Saved map with ID: " << mpCurrentMap->GetId() << endl;
 
@@ -72,9 +80,9 @@ void Atlas::CreateNewMap()
     }
     cout << "Creation of new map with last KF id: " << mnLastInitKFidMap << endl;
 
-    mpCurrentMap = new Map(mnLastInitKFidMap);
-    mpCurrentMap->SetCurrentMap();
-    mspMaps.insert(mpCurrentMap);
+    mpCurrentMap = new Map(mnLastInitKFidMap);  //新建地图
+    mpCurrentMap->SetCurrentMap();              //设置为活跃地图
+    mspMaps.insert(mpCurrentMap);               //插入地图集
 }
 
 void Atlas::ChangeMap(Map* pMap)

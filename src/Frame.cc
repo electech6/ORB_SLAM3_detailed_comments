@@ -364,8 +364,8 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
 
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
-	//求出特征点的个数
-
+	
+    //提取特征点的个数
     N = mvKeys.size();
 	//如果没有能够成功提取出特征点，那么就直接返回了
     if(mvKeys.empty())
@@ -1369,9 +1369,11 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
 
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
-
+    // 左图中提取的特征点数目
     Nleft = mvKeys.size();
+    // 右图中提取的特征点数目
     Nright = mvKeysRight.size();
+    // 特征点总数
     N = Nleft + Nright;
 
     if(N == 0)

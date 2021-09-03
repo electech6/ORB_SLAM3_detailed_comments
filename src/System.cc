@@ -114,7 +114,7 @@ System::System(const string &strVocFile,                //词袋文件所在路�
     mpAtlas = new Atlas(0);
 
     if (mSensor==IMU_STEREO || mSensor==IMU_MONOCULAR)
-        // ? 如果是有imu的传感器类型，将mbIsInertial设置为imu属性,以后的跟踪和预积分将和这个标志有关
+        // 如果是有imu的传感器类型，设置mbIsInertial = true;以后的跟踪和预积分将和这个标志有关
         mpAtlas->SetInertialSensor();
 
     // Step 6 依次创建跟踪、局部建图、闭环、显示线程
@@ -175,6 +175,7 @@ System::System(const string &strVocFile,                //词袋文件所在路�
     mpLoopCloser->SetLocalMapper(mpLocalMapper);
 
     // Fix verbosity
+    // 打印输出中间的信息，设置为安静模式
     Verbose::SetTh(Verbose::VERBOSITY_QUIET);
 
 }
@@ -354,7 +355,7 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp, const
             mbReset = false;
             mbResetActiveMap = false;
         }
-        //如果检测到重置活动地图,讲重置地图设置
+        //如果检测到重置活动地图的标志为true,将重置地图
         else if(mbResetActiveMap)
         {
             cout << "SYSTEM-> Reseting active map in monocular case" << endl;
@@ -362,14 +363,14 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp, const
             mbResetActiveMap = false;
         }
     }
-    // 如果是单目VIO模式，把IMU数据存储到mlQueueImuData
+    // 如果是单目VIO模式，把IMU数据存储到队列mlQueueImuData
     if (mSensor == System::IMU_MONOCULAR)
         for(size_t i_imu = 0; i_imu < vImuMeas.size(); i_imu++)
             mpTracker->GrabImuData(vImuMeas[i_imu]);
 
     // 计算相机位姿
     cv::Mat Tcw = mpTracker->GrabImageMonocular(im,timestamp,filename);
-
+    // 更新跟踪状态和参数
     unique_lock<mutex> lock2(mMutexState);
     mTrackingState = mpTracker->mState;
     mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints;

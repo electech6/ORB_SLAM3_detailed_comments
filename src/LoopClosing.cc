@@ -68,7 +68,7 @@ void LoopClosing::Run()
         // Step 1 查看闭环检测队列mlpLoopKeyFrameQueue中有没有关键帧进来
         if(CheckNewKeyFrames())
         {
-            if(mpLastCurrentKF)
+            if(mpLastCurrentKF) // 这部分后续未使用
             {
                 mpLastCurrentKF->mvpLoopCandKFs.clear();
                 mpLastCurrentKF->mvpMergeCandKFs.clear();
@@ -77,6 +77,7 @@ void LoopClosing::Run()
             timeDetectBoW = 0;
             std::chrono::steady_clock::time_point time_StartDetectBoW = std::chrono::steady_clock::now();
 #endif
+			// Step 2 检测有没有共视的区域
             bool bDetected = NewDetectCommonRegions();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndDetectBoW = std::chrono::steady_clock::now();
@@ -93,28 +94,39 @@ void LoopClosing::Run()
 
             if(bDetected)
             {
+				// Step 3 如果检测到融合（当前关键帧与其他地图有关联）, 则合并地图
                 if(mbMergeDetected)
                 {
+                    // 在imu模式下没有初始化就放弃融合
                     if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
                         (!mpCurrentKF->GetMap()->isImuInitialized()))
                     {
                         cout << "IMU is not initilized, merge is aborted" << endl;
                     }
+                    // 如果imu模式下成功初始化,或者非imu模式
                     else
                     {
                         Verbose::PrintMess("*Merged detected", Verbose::VERBOSITY_QUIET);
                         Verbose::PrintMess("Number of KFs in the current map: " + to_string(mpCurrentKF->GetMap()->KeyFramesInMap()), Verbose::VERBOSITY_DEBUG);
+                        // 拿到融合帧在自己地图所在坐标系(w2)下的位姿
                         cv::Mat mTmw = mpMergeMatchedKF->GetPose();
                         g2o::Sim3 gSmw2(Converter::toMatrix3d(mTmw.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTmw.rowRange(0, 3).col(3)),1.0);
+                        // 拿到当前帧在自己地图所在坐标系(w1)下的位姿
                         cv::Mat mTcw = mpCurrentKF->GetPose();
                         g2o::Sim3 gScw1(Converter::toMatrix3d(mTcw.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTcw.rowRange(0, 3).col(3)),1.0);
+                        // 根据共同区域检测时的Sim3结果得到当前帧在w2下的位姿
+                        // l = c , w2 = 2
                         g2o::Sim3 gSw2c = mg2oMergeSlw.inverse();
+                        // 这个没有用到 : 融合帧在w1下的位姿
                         g2o::Sim3 gSw1m = mg2oMergeSlw;
 
+                        // 记录焊接变换(Sim3) T_w2_w1 , 这个量实际是两个地图坐标系的关系 T_w2_w1 = T_w2_c * T_c_w1
                         mSold_new = (gSw2c * gScw1);
 
+                        // 如果是imu模式
                         if(mpCurrentKF->GetMap()->IsInertial() && mpMergeMatchedKF->GetMap()->IsInertial())
                         {
+                            // 如果尺度变换太大, 则放弃融合
                             if(mSold_new.scale()<0.90||mSold_new.scale()>1.1){
                                 mpMergeLastCurrentKF->SetErase();
                                 mpMergeMatchedKF->SetErase();
@@ -127,6 +139,7 @@ void LoopClosing::Run()
                                 continue;
                             }
                             // If inertial, force only yaw
+                            // 如果是imu模式,强制将焊接变换的的 roll 和 pitch 设为0
                             if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
                                    mpCurrentKF->GetMap()->GetIniertialBA1()) // TODO, maybe with GetIniertialBA1
                             {
@@ -137,16 +150,20 @@ void LoopClosing::Run()
                             }
                         }
 
+                        // 这个变量没有用到
                         mg2oMergeSmw = gSmw2 * gSw2c * gScw1;
 
+                        // 更新mg2oMergeScw
                         mg2oMergeScw = mg2oMergeSlw;
 
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_StartMerge = std::chrono::steady_clock::now();
 #endif
                         if (mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO)
+                        // 如果是imu模式,则开启 Visual-Inertial Map Merging
                             MergeLocal2();
                         else
+                        // 如果是纯视觉模式,则开启 Visual-Welding Map Merging
                             MergeLocal();
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_EndMerge = std::chrono::steady_clock::now();
@@ -154,12 +171,14 @@ void LoopClosing::Run()
                         vTimeMergeTotal_ms.push_back(timeMerge);
 #endif
                     }
-
+                    // 记录时间戳
                     vdPR_CurrentTime.push_back(mpCurrentKF->mTimeStamp);
                     vdPR_MatchedTime.push_back(mpMergeMatchedKF->mTimeStamp);
+                    // 标记Place recognition结果为地图融合
                     vnPR_TypeRecogn.push_back(1);
 
                     // Reset all variables
+                    // 重置所有融合相关变量
                     mpMergeLastCurrentKF->SetErase();
                     mpMergeMatchedKF->SetErase();
                     mnMergeNumCoincidences = 0;
@@ -167,7 +186,7 @@ void LoopClosing::Run()
                     mvpMergeMPs.clear();
                     mnMergeNumNotFound = 0;
                     mbMergeDetected = false;
-
+                    // 重置所有回环相关变量, 说明对与当前帧同时有回环和融合的情况只进行融合
                     if(mbLoopDetected)
                     {
                         // Reset Loop variables
@@ -182,33 +201,44 @@ void LoopClosing::Run()
 
                 }
 
+                // Step 4 如果(没有检测到融合)检测到回环, 则回环矫正
                 if(mbLoopDetected)
                 {
+                    // 标记时间戳
                     vdPR_CurrentTime.push_back(mpCurrentKF->mTimeStamp);
                     vdPR_MatchedTime.push_back(mpLoopMatchedKF->mTimeStamp);
                     vnPR_TypeRecogn.push_back(0);
 
 
                     Verbose::PrintMess("*Loop detected", Verbose::VERBOSITY_QUIET);
-
+                    // 更新 mg2oLoopScw
                     mg2oLoopScw = mg2oLoopSlw; //*mvg2oSim3LoopTcw[nCurrentIndex];
+                    // 如果是带imu的模式
                     if(mpCurrentKF->GetMap()->IsInertial())
                     {
+                        // 拿到当前关键帧相对于世界坐标系的位姿
                         cv::Mat Twc = mpCurrentKF->GetPoseInverse();
                         g2o::Sim3 g2oTwc(Converter::toMatrix3d(Twc.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(Twc.rowRange(0, 3).col(3)),1.0);
+                        
+                        // mg2oLoopScw是通过回环检测的Sim3计算出的回环矫正后的当前关键帧的初始位姿, Twc是当前关键帧回环矫正前的位姿.
+                        // g2oSww_new 可以理解为correction           
                         g2o::Sim3 g2oSww_new = g2oTwc*mg2oLoopScw;
-
+                        
+                        // 拿到 roll ,pitch ,yaw
                         Eigen::Vector3d phi = LogSO3(g2oSww_new.rotation().toRotationMatrix());
                         //cout << "tw2w1: " << g2oSww_new.translation() << endl;
                         //cout << "Rw2w1: " << g2oSww_new.rotation().toRotationMatrix() << endl;
                         //cout << "Angle Rw2w1: " << 180*phi/3.14 << endl;
                         //cout << "scale w2w1: " << g2oSww_new.scale() << endl;
-
+                        // 这里算是通过imu重力方向验证回环结果, 如果pitch或roll角度偏差稍微有一点大,则回环失败. 对phi容忍比较大(20度)
                         if (fabs(phi(0))<0.008f && fabs(phi(1))<0.008f && fabs(phi(2))<0.349f)
                         {
+                            // 如果是imu模式
                             if(mpCurrentKF->GetMap()->IsInertial())
                             {
                                 // If inertial, force only yaw
+                             
+                            // 如果是imu模式,强制将焊接变换的的 roll 和 pitch 设为0
                                 if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
                                         mpCurrentKF->GetMap()->GetIniertialBA2()) // TODO, maybe with GetIniertialBA1
                                 {
@@ -224,6 +254,7 @@ void LoopClosing::Run()
 #ifdef REGISTER_TIMES
                             std::chrono::steady_clock::time_point time_StartLoop = std::chrono::steady_clock::now();
 #endif
+							// 开启回环矫正
                             CorrectLoop();
 #ifdef REGISTER_TIMES
                             std::chrono::steady_clock::time_point time_EndLoop = std::chrono::steady_clock::now();
@@ -231,11 +262,13 @@ void LoopClosing::Run()
                             vTimeLoopTotal_ms.push_back(timeLoop);
 #endif
                         }
+                        // 如果pitch或roll角度偏差稍微有一点大,或 yaw大与20度则回环失败. 
                         else
                         {
                             cout << "BAD LOOP!!!" << endl;
                         }
                     }
+                    // 如果是纯视觉模式
                     else
                     {
                         mvpLoopMapPoints = mvpLoopMPs;
@@ -252,6 +285,7 @@ void LoopClosing::Run()
                     }
 
                     // Reset all variables
+                    // 重置所有的回环变量
                     mpLoopLastCurrentKF->SetErase();
                     mpLoopMatchedKF->SetErase();
                     mnLoopNumCoincidences = 0;
@@ -308,11 +342,16 @@ bool LoopClosing::CheckNewKeyFrames()
     unique_lock<mutex> lock(mMutexLoopQueue);
     return(!mlpLoopKeyFrameQueue.empty());
 }
-
+/**
+ * @brief 检测有没有共同区域,包括检测回环和融合匹配,sim3计算,验证
+ * 对应于ORB-SLAM2里的函数DetectLoop
+ * @return true 
+ * @return false 
+ */
 bool LoopClosing::NewDetectCommonRegions()
 {
     {
-        // Step 1 从队列中取出一个关键帧,作为当前检测闭环关键帧
+        // Step 1 从队列中取出一个关键帧,作为当前检测共同区域的关键帧
         unique_lock<mutex> lock(mMutexLoopQueue);
         // 从队列头开始取，也就是先取早进来的关键帧
         mpCurrentKF = mlpLoopKeyFrameQueue.front();
@@ -322,24 +361,25 @@ bool LoopClosing::NewDetectCommonRegions()
         // 设置当前关键帧不要在优化的过程中被删除
         mpCurrentKF->SetNotErase();
         mpCurrentKF->mbCurrentPlaceRecognition = true;
-
+        // 当前关键帧对应的地图
         mpLastMap = mpCurrentKF->GetMap();
     }
-
+    // Step 2 在某些情况下不进行共同区域检测
+    // 1.imu模式下还没经过第二阶段初始化则不考虑
     if(mpLastMap->IsInertial() && !mpLastMap->GetIniertialBA1())
     {
         mpKeyFrameDB->add(mpCurrentKF);
         mpCurrentKF->SetErase();
         return false;
     }
-
+    // 2.双目模式下且当前地图关键帧数少于5则不考虑
     if(mpTracker->mSensor == System::STEREO && mpLastMap->GetAllKeyFrames().size() < 5) //12
     {
         mpKeyFrameDB->add(mpCurrentKF);
         mpCurrentKF->SetErase();
         return false;
     }
-
+    // 3.当前地图关键帧少于12则不进行检测
     if(mpLastMap->GetAllKeyFrames().size() < 12)
     {
         mpKeyFrameDB->add(mpCurrentKF);
@@ -348,35 +388,46 @@ bool LoopClosing::NewDetectCommonRegions()
     }
 
     //Check the last candidates with geometric validation
+    // Step 3 基于前一帧的历史信息判断是否进行时序几何校验,注意这里是基于共视几何校验失败才会运行的代码,阅读代码的时候可以先看后面
+
     // Loop candidates
     bool bLoopDetectedInKF = false;
     bool bCheckSpatial = false;
-
+    // Step 3.1 回环的时序几何校验: 这里的判断条件里mnLoopNumCoincidences刚开始为0, 所以可以先跳过看后面
+    // 如果回环的共视几何验证成功帧数目大于0
     if(mnLoopNumCoincidences > 0)
     {
         bCheckSpatial = true;
         // Find from the last KF candidates
+        // 通过上一关键帧的信息,计算新的当前帧的sim3 
+        // Tcl = Tcw*Twl
         cv::Mat mTcl = mpCurrentKF->GetPose() * mpLoopLastCurrentKF->GetPoseInverse();
         g2o::Sim3 gScl(Converter::toMatrix3d(mTcl.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTcl.rowRange(0, 3).col(3)),1.0);
         g2o::Sim3 gScw = gScl * mg2oLoopSlw;
         int numProjMatches = 0;
         vector<MapPoint*> vpMatchedMPs;
+
+        // 通过把候选帧局部窗口内的地图点向新进来的关键帧投影来验证回环检测结果,并优化Sim3位姿
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpLoopMatchedKF, gScw, numProjMatches, mvpLoopMPs, vpMatchedMPs);
+        // 如果找到共同区域(时序验证成功一次)
         if(bCommonRegion)
         {
-
+            //标记时序检验成功一次 
             bLoopDetectedInKF = true;
-
+            // 累计正检验的成功次数
             mnLoopNumCoincidences++;
+            // 不再参与新的回环检测
             mpLoopLastCurrentKF->SetErase();
             mpLoopLastCurrentKF = mpCurrentKF;
-            mg2oLoopSlw = gScw;
+            mg2oLoopSlw = gScw; // 记录当前优化的结果为{last T_cw}即为 T_lw
+            // 记录匹配到的点
             mvpLoopMatchedMPs = vpMatchedMPs;
 
-
+            // 如果验证数大于等于3则为成功回环
             mbLoopDetected = mnLoopNumCoincidences >= 3;
+            // 记录失败的时序校验数为0
             mnLoopNumNotFound = 0;
-
+            //! 这里的条件反了,不过对功能没什么影响,只是打印信息
             if(!mbLoopDetected)
             {
                 //f_succes_pr << mpCurrentKF->mNameFile << " " << "8"<< endl;
@@ -384,13 +435,16 @@ bool LoopClosing::NewDetectCommonRegions()
                 cout << "PR: Loop detected with Reffine Sim3" << endl;
             }
         }
+        // 如果没找到共同区域(时序验证失败一次)
         else
         {
+            // 当前时序验证失败
             bLoopDetectedInKF = false;
             /*f_succes_pr << mpCurrentKF->mNameFile << " " << "8"<< endl;
             f_succes_pr << "% Number of spatial consensous: " << std::to_string(mnLoopNumCoincidences) << endl;*/
-
+            // 递增失败的时序验证次数
             mnLoopNumNotFound++;
+            //若果连续两帧时序验证失败则整个回环检测失败
             if(mnLoopNumNotFound >= 2)
             {
                 /*for(int i=0; i<mvpLoopLastKF.size(); ++i)
@@ -406,7 +460,7 @@ bool LoopClosing::NewDetectCommonRegions()
                 mvnLoopNumMatches.clear();
                 mvvpLoopMapPoints.clear();
                 mvvpLoopMatchedMapPoints.clear();*/
-
+                // 失败后标记重置一些信息
                 mpLoopLastCurrentKF->SetErase();
                 mpLoopMatchedKF->SetErase();
                 //mg2oLoopScw;
@@ -421,36 +475,50 @@ bool LoopClosing::NewDetectCommonRegions()
 
     //Merge candidates
     bool bMergeDetectedInKF = false;
+    // Step 3.2 融合的时序几何校验: 这里的判断条件里mnMergeNumCoincidences刚开始为0, 所以可以先跳过看后面
+    // 如果融合的共视几何验证成功帧数目大于0
     if(mnMergeNumCoincidences > 0)
     {
         // Find from the last KF candidates
-
+        // 通过上一关键帧的信息,计算新的当前帧的sim3 
+        // Tcl = Tcw*Twl
         cv::Mat mTcl = mpCurrentKF->GetPose() * mpMergeLastCurrentKF->GetPoseInverse();
         g2o::Sim3 gScl(Converter::toMatrix3d(mTcl.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTcl.rowRange(0, 3).col(3)),1.0);
         g2o::Sim3 gScw = gScl * mg2oMergeSlw;
         int numProjMatches = 0;
         vector<MapPoint*> vpMatchedMPs;
+        // 通过把候选帧局部窗口内的地图点向新进来的关键帧投影来验证回环检测结果,并优化Sim3位姿
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpMergeMatchedKF, gScw, numProjMatches, mvpMergeMPs, vpMatchedMPs);
+        // 如果找到共同区域(时序验证成功一次)
         if(bCommonRegion)
         {
             //cout << "BoW: Merge reffined Sim3 transformation suscelful" << endl;
+            //标记时序检验成功一次 
             bMergeDetectedInKF = true;
 
+            // 累计正检验的成功次数
             mnMergeNumCoincidences++;
+
+            // 不再参与新的回环检测
             mpMergeLastCurrentKF->SetErase();
             mpMergeLastCurrentKF = mpCurrentKF;
             mg2oMergeSlw = gScw;
             mvpMergeMatchedMPs = vpMatchedMPs;
-
+            // 如果验证数大于等于3则为成功回环
             mbMergeDetected = mnMergeNumCoincidences >= 3;
         }
         else
+        // 如果没找到共同区域(时序验证失败一次)
         {
             //cout << "BoW: Merge reffined Sim3 transformation failed" << endl;
+            // 没有找到融合
             mbMergeDetected = false;
+            // 当前时序验证失败
             bMergeDetectedInKF = false;
 
+            // 递增失败的时序验证次数
             mnMergeNumNotFound++;
+            //若果连续两帧时序验证失败则整个融合检测失败
             if(mnMergeNumNotFound >= 2)
             {
                 /*cout << "+++++++Merge detected failed in KF" << endl;
@@ -469,6 +537,7 @@ bool LoopClosing::NewDetectCommonRegions()
                 mvvpMergeMapPoints.clear();
                 mvvpMergeMatchedMapPoints.clear();*/
 
+                // 失败后标记重置一些信息
                 mpMergeLastCurrentKF->SetErase();
                 mpMergeMatchedKF->SetErase();
                 mnMergeNumCoincidences = 0;
@@ -480,7 +549,7 @@ bool LoopClosing::NewDetectCommonRegions()
 
         }
     }
-
+    // Step 3.3 若校验成功则把当前帧添加进数据库,且返回true表示找到共同区域
     if(mbMergeDetected || mbLoopDetected)
     {
         //f_time_pr << "Geo" << " " << timeGeoKF_ms.count() << endl;
@@ -490,6 +559,8 @@ bool LoopClosing::NewDetectCommonRegions()
 
     //-------------
     //TODO: This is only necessary if we use a minimun score for pick the best candidates
+
+    // 这两句并没有使用,作者把orbslam2里面通过minScore作为阀值筛选候选帧的策略抛弃了
     const vector<KeyFrame*> vpConnectedKeyFrames = mpCurrentKF->GetVectorCovisibleKeyFrames();
     const DBoW2::BowVector &CurrentBowVec = mpCurrentKF->mBowVec;
     /*float minScore = 1;
@@ -508,6 +579,7 @@ bool LoopClosing::NewDetectCommonRegions()
     //-------------
 
     // Extract candidates from the bag of words
+    // Step 4 若当前关键帧没有被检测到回环或融合,则分别通过bow拿到当前帧最好的三个回环候选帧和融合候选帧
     vector<KeyFrame*> vpMergeBowCand, vpLoopBowCand;
     //cout << "LC: bMergeDetectedInKF: " << bMergeDetectedInKF << "   bLoopDetectedInKF: " << bLoopDetectedInKF << endl;
     if(!bMergeDetectedInKF || !bLoopDetectedInKF)
@@ -516,6 +588,7 @@ bool LoopClosing::NewDetectCommonRegions()
         std::chrono::steady_clock::time_point time_StartDetectBoW = std::chrono::steady_clock::now();
 #endif
         // Search in BoW
+        // 分别找到3个最好的候选帧, 回环候选帧放在vpLoopBowCand中,融合候选帧放在vpMergeBowCand中
         mpKeyFrameDB->DetectNBestCandidates(mpCurrentKF, vpLoopBowCand, vpMergeBowCand,3);
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_EndDetectBoW = std::chrono::steady_clock::now();
@@ -530,7 +603,7 @@ bool LoopClosing::NewDetectCommonRegions()
 #else
     std::chrono::monotonic_clock::time_point timeStartGeoBoW = std::chrono::monotonic_clock::now();
 #endif*/
-
+    // Step 4.1 若当前关键帧没有被检测到回环,并且候选帧数量不为0,则对回环候选帧进行论文中第8页的2-5步
     if(!bLoopDetectedInKF && !vpLoopBowCand.empty())
     {
         mbLoopDetected = DetectCommonRegionsFromBoW(vpLoopBowCand, mpLoopMatchedKF, mpLoopLastCurrentKF, mg2oLoopSlw, mnLoopNumCoincidences, mvpLoopMPs, mvpLoopMatchedMPs);
@@ -538,31 +611,47 @@ bool LoopClosing::NewDetectCommonRegions()
     // Merge candidates
 
     //cout << "LC: Find BoW candidates" << endl;
-
+    // Step 4.2 若当前关键帧没有被检测到融合,并且候选帧数量不为0,则对融合候帧进行论文中第8页的2-5步
     if(!bMergeDetectedInKF && !vpMergeBowCand.empty())
     {
         mbMergeDetected = DetectCommonRegionsFromBoW(vpMergeBowCand, mpMergeMatchedKF, mpMergeLastCurrentKF, mg2oMergeSlw, mnMergeNumCoincidences, mvpMergeMPs, mvpMergeMatchedMPs);
     }
 
     //cout << "LC: add to KFDB" << endl;
+    // Step 5 根据结果确定有没有检测到共同区域
+    // 把当前帧添加到关键帧数据库中
     mpKeyFrameDB->add(mpCurrentKF);
-
+    // 如果检测到共同区域返回true
     if(mbMergeDetected || mbLoopDetected)
     {
         return true;
     }
-
+    // 如果没检测到则把当前关键帧erase(不参与后续共同区域检测)
     //cout << "LC: erase KF" << endl;
     mpCurrentKF->SetErase();
+    // 标记当前关键帧不是当前在进行共同区域检测的帧
     mpCurrentKF->mbCurrentPlaceRecognition = false;
 
     return false;
 }
-
+/**
+ * @brief 对新进来的关键帧进行时序几何验证,同时继续优化之前估计的 Tcw
+ * 
+ * @param[in] pCurrentKF 当前关键帧 
+ * @param[in] pMatchedKF 候选帧
+ * @param[out] gScw 世界坐标系在验证帧下的Sim3
+ * @param[out] nNumProjMatches 记录匹配点的数量
+ * @param[out] vpMPs 候选帧窗口内所有的地图点
+ * @param[out] vpMatchedMPs 候选帧窗口内所有被匹配到的点
+ * @return true 时序几何验证成功
+ * @return false 时序几何验证失败
+ */
 bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                                  std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {
+    // 还没有匹配点,所以为空
     set<MapPoint*> spAlreadyMatchedMPs;
+    // 把候选帧局部窗口内的地图点投向新进来的当前关键帧,看是否有足够的匹配点
     nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
 
 
@@ -577,21 +666,28 @@ bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame*
         nProjMatchesRep = 80;
     }*/
 
+    // 如果大于一定的数量
     if(nNumProjMatches >= nProjMatches)
     {
+        // 为OptimizeSim3接口准备数据
         cv::Mat mScw = Converter::toCvMat(gScw);
         cv::Mat mTwm = pMatchedKF->GetPoseInverse();
         g2o::Sim3 gSwm(Converter::toMatrix3d(mTwm.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTwm.rowRange(0, 3).col(3)),1.0);
         g2o::Sim3 gScm = gScw * gSwm;
         Eigen::Matrix<double, 7, 7> mHessian7x7;
 
+
+        // 单目情况下不锁定尺度
         bool bFixedScale = mbFixScale;       // TODO CHECK; Solo para el monocular inertial
+        // 如果是imu模式且地图没成熟,不锁定尺度
         if(mpTracker->mSensor==System::IMU_MONOCULAR && !pCurrentKF->GetMap()->GetIniertialBA2())
             bFixedScale=false;
+        // 继续优化 Sim3
         int numOptMatches = Optimizer::OptimizeSim3(mpCurrentKF, pMatchedKF, vpMatchedMPs, gScm, 10, bFixedScale, mHessian7x7, true);
 
 
 
+        // 若果匹配的数量大于一定的数目
         if(numOptMatches > nProjOptMatches)
         {
             g2o::Sim3 gScw_estimation(Converter::toMatrix3d(mScw.rowRange(0, 3).colRange(0, 3)),
@@ -599,27 +695,47 @@ bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame*
 
             vector<MapPoint*> vpMatchedMP;
             vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
-
+            // 再次通过优化后的Sim3搜索匹配点
             nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw_estimation, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
             //cout << "REFFINE-SIM3: Projection with optimize Sim3 from last KF with " << nNumProjMatches << " matches" << endl;
+            // 若果大于期望数目,接受这个结果
             if(nNumProjMatches >= nProjMatchesRep)
             {
                 gScw = gScw_estimation;
+                // 验证成功
                 return true;
             }
         }
     }
+    // 验证失败
     return false;
 }
-
+/**
+ * @brief 实现论文第8页的2-5步中的一部分功能(对后面新进来的关键帧的验证没有放在这个函数里进行)
+ * 1. 构造局部窗口
+ * 2. Ransac 得到 T_am的初始值
+ * 3. guided matching refinement
+ * 4. 利用地图中的共视关键帧验证(共视几何校验)
+ * 
+ * @param[in] vpBowCand bow 给出的一些候选关键帧
+ * @param[out] pMatchedKF2 最后成功匹配的关键帧
+ * @param[out] pLastCurrentKF 用于记录当前关键帧为上一个关键帧(后续若仍需要时序几何校验需要记录此信息)
+ * @param[out] g2oScw 世界坐标系在当前关键帧下的Sim3
+ * @param[out] nNumCoincidences 用来记录validation合格的数目
+ * @param[out] vpMPs  所有地图点
+ * @param[out] vpMatchedMPs 成功匹配的地图点 
+ * @return true 检测到一个合格的commen region
+ * @return false 没检测到一个合格的commen region 
+ */
 bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, KeyFrame* &pMatchedKF2, KeyFrame* &pLastCurrentKF, g2o::Sim3 &g2oScw,
                                              int &nNumCoincidences, std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {
-    int nBoWMatches = 20;
-    int nBoWInliers = 15;
-    int nSim3Inliers = 20;
-    int nProjMatches = 50;
-    int nProjOptMatches = 80;
+    // 一些后面会使用的阀值
+    int nBoWMatches = 20; // 最低bow匹配特征点数
+    int nBoWInliers = 15; // RANSAC最低的匹配点数
+    int nSim3Inliers = 20; // sim3 最低内点数 
+    int nProjMatches = 50; // 通过投影得到的匹配点数量最低阀值
+    int nProjOptMatches = 80; // 通过更小的半径,更严的距离搜索到的匹配点数量
     /*if(mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO)
     {
         nBoWMatches = 20;
@@ -629,15 +745,21 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         nProjOptMatches = 50;
     }*/
 
+    //获取当前帧的共视帧(在共同区域检测中应该避免当前关键帧的共视关键帧中)
     set<KeyFrame*> spConnectedKeyFrames = mpCurrentKF->GetConnectedKeyFrames();
 
+    // 定义最佳共视关键帧的数量
     int nNumCovisibles = 5;
-
+    // 用于search by bow
     ORBmatcher matcherBoW(0.9, true);
+    // 用与seach by projection
     ORBmatcher matcher(0.75, true);
+    // 没有用到
     int nNumGuidedMatching = 0;
 
     // Varibles to select the best numbe
+    // 一些用与统计最优数据的变量,我们最后返回的是最佳的一个关键帧(几何校验匹配数最高的)
+
     KeyFrame* pBestMatchedKF;
     int nBestMatchesReproj = 0;
     int nBestNumCoindicendes = 0;
@@ -645,11 +767,15 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
     std::vector<MapPoint*> vpBestMapPoints;
     std::vector<MapPoint*> vpBestMatchedMapPoints;
 
+    // bow中候选关键帧的数量
     int numCandidates = vpBowCand.size();
+    // 这三个变量是作者为了后面打印观察记录的信息,可以忽略
     vector<int> vnStage(numCandidates, 0);
     vector<int> vnMatchesStage(numCandidates, 0);
 
     int index = 0;
+
+    //对于每个候选关键帧
     for(KeyFrame* pKFi : vpBowCand)
     {
         //cout << endl << "-------------------------------" << endl;
@@ -658,22 +784,36 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 
 
         // Current KF against KF with covisibles version
+        // Step 1 获得候选关键帧的局部窗口 W_m
+        // 拿到候选关键帧的5个最优共视帧 
         std::vector<KeyFrame*> vpCovKFi = pKFi->GetBestCovisibilityKeyFrames(nNumCovisibles);
+        // 再加上候选关键帧自己(这里操作比较迷,看起来只是为了把候选关键帧放到容器的第一顺位)
         vpCovKFi.push_back(vpCovKFi[0]);
         vpCovKFi[0] = pKFi;
 
+        // search by bow 返回的参数, 记录窗口Wm中每个关键帧有哪些点能在当前关键帧Ka中通过bow找到匹配点 
         std::vector<std::vector<MapPoint*> > vvpMatchedMPs;
         vvpMatchedMPs.resize(vpCovKFi.size());
+        
+        // 记录整个窗口中有那些点能在Ka中通过bow找到匹配点(这个set是辅助容器,避免重复添加地图点)
         std::set<MapPoint*> spMatchedMPi;
         int numBoWMatches = 0;
-
+        // 记录窗口中能通过bow在当前关键帧ka中找到最多匹配点的关键帧
         KeyFrame* pMostBoWMatchesKF = pKFi;
+        // 记录窗口中能通过bow在当前关键帧ka中找到最多匹配点的数量
         int nMostBoWNumMatches = 0;
 
+        // 下面两个变量是为了sim3 solver准备的
+        //记录窗口中的地图点能在当前关键帧中找到的匹配的点(数量的上限是当前关键帧地图点的数量)
         std::vector<MapPoint*> vpMatchedPoints = std::vector<MapPoint*>(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
+        // 记录上面的地图点分别对应窗口中的关键帧(数量的上限是当前关键帧地图点的数量)
         std::vector<KeyFrame*> vpKeyFrameMatchedMP = std::vector<KeyFrame*>(mpCurrentKF->GetMapPointMatches().size(), static_cast<KeyFrame*>(NULL));
 
+        // 记录在W_km中有最多匹配点的帧的局部index, 这个后面没有用到
         int nIndexMostBoWMatchesKF=0;
+        //! bug: 并没有重新赋值pMostBoWMatchesKF, 一直是初始值: 候选关键帧 
+        // 遍历窗口内Wm的每个关键帧
+        // Step 1.1 通过Bow寻找候选帧窗口内的关键帧地图点与当前关键帧的匹配点
         for(int j=0; j<vpCovKFi.size(); ++j)
         {
             if(!vpCovKFi[j] || vpCovKFi[j]->isBad())
@@ -687,10 +827,14 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 nIndexMostBoWMatchesKF = j;
             }
         }
-
+        // 标记是否因为窗口内有当前关键帧的共视关键帧
         bool bAbortByNearKF = false;
+        // 遍历窗口内的每个关键帧
+        // Step 1.2 把窗口内的匹配点转换为Sim3Solver接口定义的格式
         for(int j=0; j<vpCovKFi.size(); ++j)
-        {
+        {   
+
+            // 如果窗口中的帧是当前帧的共视帧帧则结束这个循环
             if(spConnectedKeyFrames.find(vpCovKFi[j]) != spConnectedKeyFrames.end())
             {
                 bAbortByNearKF = true;
@@ -699,24 +843,34 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             }
 
             //cout << "Matches: " << num << endl;
+            // 遍历窗口内的某一个关键帧与当前关键帧由bow得到的匹配的地图点
+            // 注意这里每个vvpMatchedMPs[j]的大小都是相等的且等于当前关键帧中的总地图点数量,详细请看searchByBow
             for(int k=0; k < vvpMatchedMPs[j].size(); ++k)
             {
+                // 地图点指针
                 MapPoint* pMPi_j = vvpMatchedMPs[j][k];
+                // 如果指针为空活地图点被标记为bad,则跳过当前循环
                 if(!pMPi_j || pMPi_j->isBad())
                     continue;
 
+                // 窗口内不同关键帧与当前关键帧可能能看到相同的3D点, 利用辅助容器避免重复添加
                 if(spMatchedMPi.find(pMPi_j) == spMatchedMPi.end())
                 {
+                    // 利用辅助容器记录添加过的点
                     spMatchedMPi.insert(pMPi_j);
+                    // 统计窗口内有多少地图点能在当前关键中找到匹配
                     numBoWMatches++;
-
+                    //记录窗口中的地图点能在当前关键帧中找到的匹配的点
                     vpMatchedPoints[k]= pMPi_j;
+                    // 记录上面的地图点分别对应窗口中的关键帧(数量的上限是当前关键帧地图点的数量)
                     vpKeyFrameMatchedMP[k] = vpCovKFi[j];
                 }
             }
         }
 
         //cout <<"BoW: " << numBoWMatches << " independent putative matches" << endl;
+        // 当窗口内的帧不是当前关键帧的相邻帧且匹配点足够多时
+        // Step 2 利用RANSAC寻找候选关键帧窗口与当前关键帧的相对位姿T_am的初始值(可能是Sim3)
         if(!bAbortByNearKF && numBoWMatches >= nBoWMatches) // TODO pick a good threshold
         {
             /*cout << "-------------------------------" << endl;
@@ -725,10 +879,14 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             // Geometric validation
 
             bool bFixedScale = mbFixScale;
+            //? 如果是单目带imu的模式且地图没有成熟则不固定scale 
             if(mpTracker->mSensor==System::IMU_MONOCULAR && !mpCurrentKF->GetMap()->GetIniertialBA2())
                 bFixedScale=false;
 
+            // 初始化sim3 solver
+            // Sim3Solver 的接口与orbslam2略有不同, 因为现在是1-N的对应关系
             Sim3Solver solver = Sim3Solver(mpCurrentKF, pMostBoWMatchesKF, vpMatchedPoints, bFixedScale, vpKeyFrameMatchedMP);
+            //Sim3Solver Ransac 置信度0.99，至少20个inliers 最多300次迭
             solver.SetRansacParameters(0.99, nBoWInliers, 300); // at least 15 inliers
 
             bool bNoMore = false;
@@ -736,12 +894,14 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             int nInliers;
             bool bConverge = false;
             cv::Mat mTcm;
+            // 迭代到收敛
             while(!bConverge && !bNoMore)
             {
                 mTcm = solver.iterate(20,bNoMore, vbInliers, nInliers, bConverge);
             }
 
             //cout << "Num inliers: " << nInliers << endl;
+            // Step 3 Guide matching refinement: 利用初始的Tam信息,进行双向重投影,并非线性优化得到更精确的Tam
             if(bConverge)
             {
                 //cout <<"BoW: " << nInliers << " inliers in Sim3Solver" << endl;
@@ -749,24 +909,36 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 // Match by reprojection
                 //int nNumCovisibles = 5;
                 vpCovKFi.clear();
+                // 拿到窗口内匹配最多的帧的最佳5个共视帧和它自己组成的窗口
                 vpCovKFi = pMostBoWMatchesKF->GetBestCovisibilityKeyFrames(nNumCovisibles);
                 int nInitialCov = vpCovKFi.size();
                 vpCovKFi.push_back(pMostBoWMatchesKF);
+                // 这个后面没有用到
                 set<KeyFrame*> spCheckKFs(vpCovKFi.begin(), vpCovKFi.end());
 
+                // 辅助容器,避免重复添加地图点
                 set<MapPoint*> spMapPoints;
+                // 这两个容器是searchByProjection定义的容器
+                // 记录窗口内地图点
                 vector<MapPoint*> vpMapPoints;
+                // 记录每个地图点对应的串口内的关键帧
                 vector<KeyFrame*> vpKeyFrames;
+                // 遍历窗Wm内的所有关键帧
                 for(KeyFrame* pCovKFi : vpCovKFi)
                 {
+                        // 遍历窗口内每个关键帧的所有地图点
                     for(MapPoint* pCovMPij : pCovKFi->GetMapPointMatches())
                     {
+                        // 如果指针为空或者改地图点被标记为bad
                         if(!pCovMPij || pCovMPij->isBad())
                             continue;
-
+                        // 避免重复添加
                         if(spMapPoints.find(pCovMPij) == spMapPoints.end())
-                        {
+                        {   
+
+                            // 辅助容器用来记录点是否已经添加
                             spMapPoints.insert(pCovMPij);
+                            // 把地图点和对应关键帧记录下来
                             vpMapPoints.push_back(pCovMPij);
                             vpKeyFrames.push_back(pCovKFi);
                         }
@@ -774,87 +946,105 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 }
                 //cout << "Point cloud: " << vpMapPoints.size() << endl;
 
-
+                // 拿到solver 估计的 Tam初始值, 为后续的非线性优化做准备, 在这里 c 表示当前关键帧, m 表示回环/融合候选帧
                 g2o::Sim3 gScm(Converter::toMatrix3d(solver.GetEstimatedRotation()),Converter::toVector3d(solver.GetEstimatedTranslation()),solver.GetEstimatedScale());
                 g2o::Sim3 gSmw(Converter::toMatrix3d(pMostBoWMatchesKF->GetRotation()),Converter::toVector3d(pMostBoWMatchesKF->GetTranslation()),1.0);
+                // 利用初始的Tam估计确定世界坐标系在当前相机中的位姿
                 g2o::Sim3 gScw = gScm*gSmw; // Similarity matrix of current from the world position
+                // 准备用来SearchByProjection的位姿信息
                 cv::Mat mScw = Converter::toCvMat(gScw);
 
-
+                // 记录最后searchByProjection的结果
                 vector<MapPoint*> vpMatchedMP;
                 vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
                 vector<KeyFrame*> vpMatchedKF;
                 vpMatchedKF.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<KeyFrame*>(NULL));
+                // Step 3.1 重新利用之前计算的mScw信息, 通过投影寻找更多的匹配点
                 int numProjMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpKeyFrames, vpMatchedMP, vpMatchedKF, 8, 1.5);
 
+                // 如果拿到了足够多的匹配点
                 if(numProjMatches >= nProjMatches)
                 {
                     // Optimize Sim3 transformation with every matches
                     Eigen::Matrix<double, 7, 7> mHessian7x7;
 
                     bool bFixedScale = mbFixScale;
+                    // 在imu模式下没有成熟的地图就不固定scale
                     if(mpTracker->mSensor==System::IMU_MONOCULAR && !mpCurrentKF->GetMap()->GetIniertialBA2())
                         bFixedScale=false;
-
+                    // Step 3.2 利用搜索到的更多的匹配点优化双向投影误差得到的更好的 gScm (Tam)
                     int numOptMatches = Optimizer::OptimizeSim3(mpCurrentKF, pKFi, vpMatchedMP, gScm, 10, mbFixScale, mHessian7x7, true);
                     //cout <<"BoW: " << numOptMatches << " inliers in the Sim3 optimization" << endl;
                     //cout << "Inliers in Sim3 optimization: " << numOptMatches << endl;
 
+                    // Step 3.3 如果内点足够多,用更小的半径搜索匹配点,并且再次进行优化(p.s.这里与论文不符,并没有再次优化)
                     if(numOptMatches >= nSim3Inliers)
                     {
                         //cout <<"BoW: " << numOptMatches << " inliers in Sim3 optimization" << endl;
+                        // 前面已经声明了这些变量了,无需再次声明
                         g2o::Sim3 gSmw(Converter::toMatrix3d(pMostBoWMatchesKF->GetRotation()),Converter::toVector3d(pMostBoWMatchesKF->GetTranslation()),1.0);
                         g2o::Sim3 gScw = gScm*gSmw; // Similarity matrix of current from the world position
                         cv::Mat mScw = Converter::toCvMat(gScw);
 
                         vector<MapPoint*> vpMatchedMP;
                         vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
+                        // Step 3.4 重新利用之前计算的mScw信息, 通过更小的半径和更严格的距离的投影寻找匹配点
+                        // 5 : 半径的增益系数(对比之前下降了)---> 更小的半径, 1.0 , hamming distance 的阀值增益系数---> 允许更小的距离
                         int numProjOptMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpMatchedMP, 5, 1.0);
                         //cout <<"BoW: " << numProjOptMatches << " matches after of the Sim3 optimization" << endl;
-
+                        // ? 论文中说好的再优化一次呢?只做了搜索并没有再次进行OptimizeSim3
+                        // 当新的投影得到的内点数量大于nProjOptMatches时
                         if(numProjOptMatches >= nProjOptMatches)
                         {
+                            // Step 4. 用当前关键帧的相邻关键来验证前面得到的Tam(共视几何校验)
+                            // 统计验证成功的关键帧数量
                             int nNumKFs = 0;
                             //vpMatchedMPs = vpMatchedMP;
                             //vpMPs = vpMapPoints;
                             // Check the Sim3 transformation with the current KeyFrame covisibles
+                            // Step 4.1 拿到用来验证的关键帧组(后称为验证组): 当前关键帧的共视关键帧
                             vector<KeyFrame*> vpCurrentCovKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(nNumCovisibles);
                             //cout << "---" << endl;
                             //cout << "BoW: Geometrical validation" << endl;
                             int j = 0;
+                            // 遍历验证组当有三个关键帧验证成功或遍历所有的关键帧后结束循环
                             while(nNumKFs < 3 && j<vpCurrentCovKFs.size())
                             //for(int j=0; j<vpCurrentCovKFs.size(); ++j)
-                            {
+                            {   
+                                // 拿出验证组中的一个关键帧
                                 KeyFrame* pKFj = vpCurrentCovKFs[j];
+                                // 为 DetectCommonRegionsFromLastKF准备一个初始位姿, 这个用来进行searchByProjection
                                 cv::Mat mTjc = pKFj->GetPose() * mpCurrentKF->GetPoseInverse();
                                 g2o::Sim3 gSjc(Converter::toMatrix3d(mTjc.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTjc.rowRange(0, 3).col(3)),1.0);
                                 g2o::Sim3 gSjw = gSjc * gScw;
                                 int numProjMatches_j = 0;
                                 vector<MapPoint*> vpMatchedMPs_j;
+                                // Step 4.2 几何校验函数, 这个函数里面其实是个searchByProjection : 通过之前计算的位姿转换地图点并通过投影搜索匹配点, 若大于一定数目的任务成功验证一次
                                 bool bValid = DetectCommonRegionsFromLastKF(pKFj,pMostBoWMatchesKF, gSjw,numProjMatches_j, vpMapPoints, vpMatchedMPs_j);
 
                                 if(bValid)
                                 {
+                                    // 统计valid的帧的数量
                                     nNumKFs++;
                                 }
 
                                 j++;
                             }
-
+                            // 这里又是没有用的代码,只是记录一点信息,可能是为了方便打印检查
                             if(nNumKFs < 3)
                             {
                                 vnStage[index] = 8;
                                 vnMatchesStage[index] = nNumKFs;
                             }
-
+                            // 记录第二次searchByProjection得到最多匹配点的关键帧的各种信息,最后作为回环帧/融合帧
                             if(nBestMatchesReproj < numProjOptMatches)
                             {
-                                nBestMatchesReproj = numProjOptMatches;
-                                nBestNumCoindicendes = nNumKFs;
-                                pBestMatchedKF = pMostBoWMatchesKF;
-                                g2oBestScw = gScw;
-                                vpBestMapPoints = vpMapPoints;
-                                vpBestMatchedMapPoints = vpMatchedMP;
+                                nBestMatchesReproj = numProjOptMatches; // 投影匹配的数量
+                                nBestNumCoindicendes = nNumKFs; // 成功验证的帧数
+                                pBestMatchedKF = pMostBoWMatchesKF; // 记录候选帧窗口内与当前关键帧相似度最高的帧
+                                g2oBestScw = gScw; // 记录最优的位姿(这个位姿是由Tam推到出来的 : Taw = Tam * Tmw,这里a表示c)
+                                vpBestMapPoints = vpMapPoints; //  记录所有的地图点
+                                vpBestMatchedMapPoints = vpMatchedMP; // 记录所有的地图点中被成功匹配的点
                             }
 
 
@@ -867,7 +1057,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         }
         index++;
     }
-
+    // 如果成功找到了共同区域帧把记录的最优值存到输出变量中
     if(nBestMatchesReproj > 0)
     {
         pLastCurrentKF = mpCurrentKF;
@@ -877,11 +1067,12 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         g2oScw = g2oBestScw;
         vpMPs = vpBestMapPoints;
         vpMatchedMPs = vpBestMatchedMapPoints;
-
+        //如果有三个成功验证则return ture
         return nNumCoincidences >= 3;
     }
     else
     {
+        // 这里是一些无用的变量, 左值只用来打印检查
         int maxStage = -1;
         int maxMatched;
         for(int i=0; i<vnStage.size(); ++i)
@@ -896,17 +1087,35 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 //        f_succes_pr << mpCurrentKF->mNameFile << " " << std::to_string(maxStage) << endl;
 //        f_succes_pr << "% NumCand: " << std::to_string(numCandidates) << "; matches: " << std::to_string(maxMatched) << endl;
     }
+
+    // 如果少于3个当前关键帧的共视关键帧验证了这个候选帧,那么返回失败,注意,这里的失败并不代表最终的验证失败,后续会开启时序校验
     return false;
 }
 
+/**
+ * @brief 用来验证候选帧的函数, 这个函数的名字取的不好, 函数的本意是想利用候选帧的共视关键帧来验证候选帧,不如改叫做：DetectCommonRegionsFromCoVKF
+ * 
+ * @param[in] pCurrentKF 当前关键帧
+ * @param[in] pMatchedKF 候选帧
+ * @param[in] gScw 世界坐标系在验证帧下的Sim3
+ * @param[out] nNumProjMatches 最后匹配的数目 
+ * @param[out] vpMPs 候选帧的窗口内所有的地图点
+ * @param[out] vpMatchedMPs 候选帧的窗口内被匹配到的地图点 
+ * @return true 验证成功
+ * @return false 验证失败
+ */
 bool LoopClosing::DetectCommonRegionsFromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                                 std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
-{
+{   
+
+    // 所有的匹配点
     set<MapPoint*> spAlreadyMatchedMPs(vpMatchedMPs.begin(), vpMatchedMPs.end());
+    // 通过Sim3变换后投影寻找匹配点
     nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
     //cout << "Projection from last KF with " << nNumProjMatches << " matches" << endl;
 
     int nProjMatches = 30;
+    // 如果匹配点数目大于一定的阀值,则认为验证成功,返回ture
     if(nNumProjMatches >= nProjMatches)
     {
         /*cout << "PR_From_LastKF: KF " << pCurrentKF->mnId << " has " << nNumProjMatches << " with KF " << pMatchedKF->mnId << endl;
@@ -954,23 +1163,44 @@ bool LoopClosing::DetectCommonRegionsFromLastKF(KeyFrame* pCurrentKF, KeyFrame* 
     return false;
 }
 
+/**
+ * @brief 包装与searchByProjection之上, 只不过是把窗口内的所有地图点往当前关键帧上投影, 寻找匹配点
+ * 
+ * @param[in] pCurrentKF 当前关键帧
+ * @param[in] pMatchedKFw 候选帧
+ * @param[in] g2oScw 世界坐标系在验证帧坐标系下的位姿
+ * @param[in] spMatchedMPinOrigin 没有用上? 
+ * @param[in] vpMapPoints 候选帧及其共视关键帧组成的窗口里所有的地图点
+ * @param[in] vpMatchedMapPoints 候选帧及其共视关键帧组成的窗口里所有被匹配上的地图点
+ * @return int 匹配点的数量
+ */
 int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatchedKFw, g2o::Sim3 &g2oScw,
                                          set<MapPoint*> &spMatchedMPinOrigin, vector<MapPoint*> &vpMapPoints,
                                          vector<MapPoint*> &vpMatchedMapPoints)
 {
     int nNumCovisibles = 5;
+    //拿出候选帧的五个最好的共视关键帧
     vector<KeyFrame*> vpCovKFm = pMatchedKFw->GetBestCovisibilityKeyFrames(nNumCovisibles);
     int nInitialCov = vpCovKFm.size();
+    // 把自己也加进去, 组成一个局部窗口
     vpCovKFm.push_back(pMatchedKFw);
+
+    // 辅助容器,防止重复添加
     set<KeyFrame*> spCheckKFs(vpCovKFm.begin(), vpCovKFm.end());
+    // 拿出当前关键帧的共视关键帧
     set<KeyFrame*> spCurrentCovisbles = pCurrentKF->GetConnectedKeyFrames();
+    // 扩充窗口
+    // 对于之前里的每个关键帧
     for(int i=0; i<nInitialCov; ++i)
     {
+        // 拿到共视关键帧
         vector<KeyFrame*> vpKFs = vpCovKFm[i]->GetBestCovisibilityKeyFrames(nNumCovisibles);
         int nInserted = 0;
         int j = 0;
+        // 这个while循环统计的遍历后面都没有用到, 没有任何作用
         while(j < vpKFs.size() && nInserted < nNumCovisibles)
         {
+            // 如果没有被重复添加且不是当前关键帧的共视关键帧
             if(spCheckKFs.find(vpKFs[j]) == spCheckKFs.end() && spCurrentCovisbles.find(vpKFs[j]) == spCurrentCovisbles.end())
             {
                 spCheckKFs.insert(vpKFs[j]);
@@ -978,18 +1208,27 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
             }
             ++j;
         }
+        
+        // 把每个帧的共视关键帧都加到窗口内
         vpCovKFm.insert(vpCovKFm.end(), vpKFs.begin(), vpKFs.end());
     }
+    // 辅助容器, 防止地图点被重复添加
     set<MapPoint*> spMapPoints;
+
+    // 清空这两个容器,重新进行searchByProjection
     vpMapPoints.clear();
     vpMatchedMapPoints.clear();
+    // 对于窗口内每个关键帧
     for(KeyFrame* pKFi : vpCovKFm)
     {
+        // 对于每个关键帧的地图点
         for(MapPoint* pMPij : pKFi->GetMapPointMatches())
         {
+            // 如果指针不是空,且点不是bad
             if(!pMPij || pMPij->isBad())
                 continue;
 
+            // 如果没有被重复添加
             if(spMapPoints.find(pMPij) == spMapPoints.end())
             {
                 spMapPoints.insert(pMPij);
@@ -1003,7 +1242,9 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
 
     ORBmatcher matcher(0.9, true);
 
+    // 初始化被匹配到的地图点容器, 匹配上限是当前帧的地图点数量
     vpMatchedMapPoints.resize(pCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
+    // 把窗口中的点向当前关键帧投影, 搜索匹配点, 注意验证的时候用的搜索半径是最小的
     int num_matches = matcher.SearchByProjection(pCurrentKF, mScw, vpMapPoints, vpMatchedMapPoints, 3, 1.5);
 
     return num_matches;
@@ -1286,6 +1527,7 @@ void LoopClosing::CorrectLoop()
     mpCurrentKF->AddLoopEdge(mpLoopMatchedKF);
 
     // Launch a new thread to perform Global Bundle Adjustment (Only if few keyframes, if not it would take too much time)
+    // 闭环地图没有imu初始化或者 仅有一个地图且内部关键帧<200时才执行全局BA，否则太慢
     if(!pLoopMap->isImuInitialized() || (pLoopMap->KeyFramesInMap()<200 && mpAtlas->CountMaps()==1))
     {
 	    // Step 8：新建一个线程用于全局BA优化
@@ -1303,21 +1545,31 @@ void LoopClosing::CorrectLoop()
 
     mLastLoopKFid = mpCurrentKF->mnId; //TODO old varible, it is not use in the new algorithm
 }
-
+/**
+ * @brief 在检测到成功验证的融合帧后进行地图融合主要任务:
+ * 1. 焊缝区域局部BA
+ * 2. Essential Graph BA
+ * 融合两张地图为一张地图
+ */
 void LoopClosing::MergeLocal()
 {
     Verbose::PrintMess("MERGE: Merge Visual detected!!!!", Verbose::VERBOSITY_NORMAL);
-
+    //mpTracker->SetStepByStep(true);
+    // 窗口内共视关键帧的数量
     int numTemporalKFs = 15; //TODO (set by parameter): Temporal KFs in the local window if the map is inertial.
 
     //Relationship to rebuild the essential graph, it is used two times, first in the local window and later in the rest of the map
+    // 建立本质图必须的量
     KeyFrame* pNewChild;
     KeyFrame* pNewParent;
-
+    
+    // 当前关键帧的窗口
     vector<KeyFrame*> vpLocalCurrentWindowKFs;
+    // 候选关键帧的窗口 
     vector<KeyFrame*> vpMergeConnectedKFs;
 
     // Flag that is true only when we stopped a running BA, in this case we need relaunch at the end of the merge
+    // 记录是否把全局BA停下
     bool bRelaunchBA = false;
 
     Verbose::PrintMess("MERGE: Check Full Bundle Adjustment", Verbose::VERBOSITY_DEBUG);
@@ -1338,8 +1590,10 @@ void LoopClosing::MergeLocal()
     }
 
     Verbose::PrintMess("MERGE: Request Stop Local Mapping", Verbose::VERBOSITY_DEBUG);
+    // 请求局部建图线程停止
     mpLocalMapper->RequestStop();
     // Wait until Local Mapping has effectively stopped
+    // 等待局部建图工作停止
     while(!mpLocalMapper->isStopped())
     {
         usleep(1000);
@@ -1350,16 +1604,26 @@ void LoopClosing::MergeLocal()
 
     // Merge map will become in the new active map with the local window of KFs and MPs from the current map.
     // Later, the elements of the current map will be transform to the new active map reference, in order to keep real time tracking
+    // 当前关键帧的共视关键帧和他们观测到的地图点会先被融合, 融合后的图会变成新的当前激活地图.
+    // 之后, 所有当前地图的其他部分会被转换到当前地图中, 这样是为了保证tracking的实时性.
+
+    // 当前关键帧地图的指针
     Map* pCurrentMap = mpCurrentKF->GetMap();
+    // 融合关键帧地图的指针
     Map* pMergeMap = mpMergeMatchedKF->GetMap();
 
     // Ensure current keyframe is updated
+    // 先保证当前关键帧的链接关系是最新的
     mpCurrentKF->UpdateConnections();
-
+    // Step 1 构建当前关键帧和融合关键帧的局部窗口(关键帧+地图点)
     //Get the current KF and its neighbors(visual->covisibles; inertial->temporal+covisibles)
+    // 当前关键帧的局部窗口(仅是辅助容器,防止重复添加)
     set<KeyFrame*> spLocalWindowKFs;
     //Get MPs in the welding area from the current map
+    // 当前关键帧局部串口能观测到的所有地图点(仅是辅助容器,防止重复添加)
     set<MapPoint*> spLocalWindowMPs;
+    // 这段代码只在visual状态下才会被使用，所以只会执行else
+    // Step 1.1 构造当前关键帧局部共视帧窗口
     if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization
     {
         KeyFrame* pKFi = mpCurrentKF;
@@ -1375,7 +1639,7 @@ void LoopClosing::MergeLocal()
         }
 
         pKFi = mpCurrentKF->mNextKF;
-        while(pKFi)
+        while(pKFi) //! 这里会死循环,不过无所谓，这个外面的if永远不会执行
         {
             spLocalWindowKFs.insert(pKFi);
 
@@ -1385,22 +1649,32 @@ void LoopClosing::MergeLocal()
     }
     else
     {
+        // 把自己先加到窗口内
         spLocalWindowKFs.insert(mpCurrentKF);
     }
 
+    //拿到当前关键帧的numTemporalKFs(15)个最佳共视关键帧
     vector<KeyFrame*> vpCovisibleKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(numTemporalKFs);
+    // 把当前帧的共视帧都加到窗口里
     spLocalWindowKFs.insert(vpCovisibleKFs.begin(), vpCovisibleKFs.end());
+    // 限制while循环次数
     const int nMaxTries = 3;
     int nNumTries = 0;
+    // 如果窗口里的关键帧数量不够就再拉一些窗口里的关键帧的共视关键帧(二级共视关键帧)进来
     while(spLocalWindowKFs.size() < numTemporalKFs && nNumTries < nMaxTries)
     {
         vector<KeyFrame*> vpNewCovKFs;
         vpNewCovKFs.empty();
+        // 遍历创口内的每一个关键帧
         for(KeyFrame* pKFi : spLocalWindowKFs)
         {
+            // 拿到一些二级共视关键帧
             vector<KeyFrame*> vpKFiCov = pKFi->GetBestCovisibilityKeyFrames(numTemporalKFs/2);
+            
+            // 对于每个二级共视关键帧
             for(KeyFrame* pKFcov : vpKFiCov)
             {
+                // 如果指针不为空,且关键帧没有被标记为bad,且没有被添加过则加到窗口内
                 if(pKFcov && !pKFcov->isBad() && spLocalWindowKFs.find(pKFcov) == spLocalWindowKFs.end())
                 {
                     vpNewCovKFs.push_back(pKFcov);
@@ -1408,11 +1682,13 @@ void LoopClosing::MergeLocal()
 
             }
         }
-
+        // 用set记录,防止重复添加
         spLocalWindowKFs.insert(vpNewCovKFs.begin(), vpNewCovKFs.end());
+        // 递增循环次数
         nNumTries++;
     }
 
+    // Step 1.2 把当前关键帧窗口里关键帧观测到的地图点加进来
     for(KeyFrame* pKFi : spLocalWindowKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1422,7 +1698,10 @@ void LoopClosing::MergeLocal()
         spLocalWindowMPs.insert(spMPs.begin(), spMPs.end());
     }
 
+    // Step 1.3 构造融合帧的共视帧窗口
+    // 融合关键帧能的共视关键帧们
     set<KeyFrame*> spMergeConnectedKFs;
+    // 这段代码只在visual状态下才会被使用，所以只会执行else
     if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization
     {
         KeyFrame* pKFi = mpMergeMatchedKF;
@@ -1435,26 +1714,35 @@ void LoopClosing::MergeLocal()
         }
 
         pKFi = mpMergeMatchedKF->mNextKF;
-        while(pKFi)
+        while(pKFi)//! 这里会死循环,不过无所谓，if永远不会执行
         {
             spMergeConnectedKFs.insert(pKFi);
         }
     }
     else
     {
+        // 先把融合关键帧自己添加到窗口内
         spMergeConnectedKFs.insert(mpMergeMatchedKF);
     }
+    // 拿到融合关键帧最好的numTemporalKFs(15)个最佳共视关键帧
     vpCovisibleKFs = mpMergeMatchedKF->GetBestCovisibilityKeyFrames(numTemporalKFs);
     spMergeConnectedKFs.insert(vpCovisibleKFs.begin(), vpCovisibleKFs.end());
+    // 记录循环次数
     nNumTries = 0;
+    // 如果融合关键帧窗口里的关键帧不够就再拉一些窗口里的关键帧的共视帧进来(二级共视关键帧)
     while(spMergeConnectedKFs.size() < numTemporalKFs && nNumTries < nMaxTries)
     {
         vector<KeyFrame*> vpNewCovKFs;
+        // 遍历融合关键帧内的所有的一级共视关键帧
         for(KeyFrame* pKFi : spMergeConnectedKFs)
         {
+            // 拿到一些二级共视关键帧
             vector<KeyFrame*> vpKFiCov = pKFi->GetBestCovisibilityKeyFrames(numTemporalKFs/2);
+            // 对于每个二级共视关键帧
             for(KeyFrame* pKFcov : vpKFiCov)
             {
+                
+                // 如果指针不为空,且关键帧没有被标记为bad,且没有被添加过则加到窗口内
                 if(pKFcov && !pKFcov->isBad() && spMergeConnectedKFs.find(pKFcov) == spMergeConnectedKFs.end())
                 {
                     vpNewCovKFs.push_back(pKFcov);
@@ -1462,46 +1750,62 @@ void LoopClosing::MergeLocal()
 
             }
         }
-
+        // 用set记录,防止重复添加
         spMergeConnectedKFs.insert(vpNewCovKFs.begin(), vpNewCovKFs.end());
+        // 递增循环次数
         nNumTries++;
     }
 
+    // 融合关键帧共视窗口内的所有地图点
     set<MapPoint*> spMapPointMerge;
+    // Step 1.4  把融合关键帧窗口里关键帧观测到的地图点加进来
     for(KeyFrame* pKFi : spMergeConnectedKFs)
     {
         set<MapPoint*> vpMPs = pKFi->GetMapPoints();
         spMapPointMerge.insert(vpMPs.begin(),vpMPs.end());
     }
 
+    //把融合关键帧窗口内的地图点加到待融合的向量中
     vector<MapPoint*> vpCheckFuseMapPoint;
     vpCheckFuseMapPoint.reserve(spMapPointMerge.size());
     std::copy(spMapPointMerge.begin(), spMapPointMerge.end(), std::back_inserter(vpCheckFuseMapPoint));
-
-    //
+    // Step 2 根据之前的Sim3初始值, 记录当前帧窗口内关键帧,地图点的矫正前的值,和矫正后的初始值
+    
+    // Step 2.1 先计算当前关键帧矫正前的值,后矫正后的初始值
     cv::Mat Twc = mpCurrentKF->GetPoseInverse();
 
     cv::Mat Rwc = Twc.rowRange(0,3).colRange(0,3);
     cv::Mat twc = Twc.rowRange(0,3).col(3);
+
+    // 记录没有融合矫正之前的Swc和Scw
     g2o::Sim3 g2oNonCorrectedSwc(Converter::toMatrix3d(Rwc),Converter::toVector3d(twc),1.0);
     g2o::Sim3 g2oNonCorrectedScw = g2oNonCorrectedSwc.inverse();
+
+    // 拿到之前通过Sim3(见 NewDetectCommonRegion)计算得到的当前关键帧融合矫正之后的初始位姿
     g2o::Sim3 g2oCorrectedScw = mg2oMergeScw; //TODO Check the transformation
 
+    // 记录当前关键帧窗口内所有关键帧融合矫正之前的位姿,和融合矫正之后的初始位姿
     KeyFrameAndPose vCorrectedSim3, vNonCorrectedSim3;
     vCorrectedSim3[mpCurrentKF]=g2oCorrectedScw;
     vNonCorrectedSim3[mpCurrentKF]=g2oNonCorrectedScw;
 
+    // Step 2.2 通过当前关键帧融合矫正前后的位姿,把当前关键帧的共视窗口里面剩余的关键帧矫正前后的位姿都给填写上
+    // 对于每个当前关键帧共视窗口里的关键帧
     for(KeyFrame* pKFi : spLocalWindowKFs)
     {
+        // 跳过空的指针,或者坏的关键帧
         if(!pKFi || pKFi->isBad())
         {
             continue;
         }
 
+        // 确保这些共视关键帧在当前地图下
+        // 保存第i个共视关键帧融合矫正后的初始位姿
         g2o::Sim3 g2oCorrectedSiw;
 
         if(pKFi!=mpCurrentKF)
         {
+            // 先记录下融合矫正前的位姿
             cv::Mat Tiw = pKFi->GetPose();
             cv::Mat Riw = Tiw.rowRange(0,3).colRange(0,3);
             cv::Mat tiw = Tiw.rowRange(0,3).col(3);
@@ -1509,6 +1813,7 @@ void LoopClosing::MergeLocal()
             //Pose without correction
             vNonCorrectedSim3[pKFi]=g2oSiw;
 
+            // 根据链式法则,利用当前关键帧和第i个共视关键帧的位姿关系,以及当前关键帧矫正后的初始位姿,推得第i个共视关键帧的矫正后的初始位姿
             cv::Mat Tic = Tiw*Twc;
             cv::Mat Ric = Tic.rowRange(0,3).colRange(0,3);
             cv::Mat tic = Tic.rowRange(0,3).col(3);
@@ -1520,20 +1825,24 @@ void LoopClosing::MergeLocal()
         {
             g2oCorrectedSiw = g2oCorrectedScw;
         }
+        // 这一句没有什么作用,下面又被覆盖了
         pKFi->mTcwMerge  = pKFi->GetPose();
 
         // Update keyframe pose with corrected Sim3. First transform Sim3 to SE3 (scale translation)
+        // 根据上面计算得到的融合矫正后的初始位姿(Sim3),更新窗口内每个关键帧的mTcwMerge(矫正后的初始位姿)
         Eigen::Matrix3d eigR = g2oCorrectedSiw.rotation().toRotationMatrix();
         Eigen::Vector3d eigt = g2oCorrectedSiw.translation();
         double s = g2oCorrectedSiw.scale();
 
         pKFi->mfScale = s;
+        // 修正尺度
         eigt *=(1./s); //[R t/s;0 1]
 
         cv::Mat correctedTiw = Converter::toCvSE3(eigR,eigt);
-
+        // 赋值得到的矫正后的初始位姿
         pKFi->mTcwMerge = correctedTiw;
 
+        //! 貌似又是没用的代码
         if(pCurrentMap->isImuInitialized())
         {
             Eigen::Matrix3d Rcor = eigR.transpose()*vNonCorrectedSim3[pKFi].rotation().toRotationMatrix();
@@ -1541,33 +1850,43 @@ void LoopClosing::MergeLocal()
         }
 
     }
-
+    // Step 2.3 记录所有地图点矫正前的位置,和矫正后的初始值
+    // 对于每个窗口内的地图点
     for(MapPoint* pMPi : spLocalWindowMPs)
     {
         if(!pMPi || pMPi->isBad())
             continue;
-
+        
+        // 拿到参考关键帧
         KeyFrame* pKFref = pMPi->GetReferenceKeyFrame();
+        // 拿到计算好的矫正后参考关键帧的初始位姿
         g2o::Sim3 g2oCorrectedSwi = vCorrectedSim3[pKFref].inverse();
+        // 拿到矫正前的参考关键帧的位姿
         g2o::Sim3 g2oNonCorrectedSiw = vNonCorrectedSim3[pKFref];
 
         // Project with non-corrected pose and project back with corrected pose
+        // 先把3D点转换到参考关键帧矫正前的坐标系中
         cv::Mat P3Dw = pMPi->GetWorldPos();
         Eigen::Matrix<double,3,1> eigP3Dw = Converter::toVector3d(P3Dw);
+        // 再转换到矫正后的初始坐标系中
         Eigen::Matrix<double,3,1> eigCorrectedP3Dw = g2oCorrectedSwi.map(g2oNonCorrectedSiw.map(eigP3Dw));
+        // 计算旋转部分的变化
         Eigen::Matrix3d eigR = g2oCorrectedSwi.rotation().toRotationMatrix();
         Eigen::Matrix3d Rcor = eigR * g2oNonCorrectedSiw.rotation().toRotationMatrix();
-
+        // 矫正后3d点的初始位置
         cv::Mat cvCorrectedP3Dw = Converter::toCvMat(eigCorrectedP3Dw);
 
         pMPi->mPosMerge = cvCorrectedP3Dw;
+        // 用旋转部分的变化更新计算3D点normal的新值
         pMPi->mNormalVectorMerge = Converter::toCvMat(Rcor) * pMPi->GetNormal();
     }
 
-    {
+    // Step 3 更新两个地图的信息(当前帧所在地图,融合帧所在地图)
+    {   // 当前地图会被更新，老的地图中的重复地图点会被剔除
         unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
         unique_lock<mutex> mergeLock(pMergeMap->mMutexMapUpdate); // We remove the Kfs and MPs in the merged area from the old map
-
+        // 对于当前关键帧共视窗口内的每一个关键帧
+        // Step 3.1 更新当前关键帧共视窗口内的关键帧信息
         for(KeyFrame* pKFi : spLocalWindowKFs)
         {
             if(!pKFi || pKFi->isBad())
@@ -1575,76 +1894,105 @@ void LoopClosing::MergeLocal()
                 //cout << "Bad KF in correction" << endl;
                 continue;
             }
-
+            // 记录融合矫正前的位姿
             pKFi->mTcwBefMerge = pKFi->GetPose();
             pKFi->mTwcBefMerge = pKFi->GetPoseInverse();
-            pKFi->SetPose(pKFi->mTcwMerge);
+            // 把这个关键帧的位姿设置为融合矫正后的初始位姿
+            pKFi->SetPose(pKFi->mTcwMerge); 
 
             // Make sure connections are updated
+            // 把这个关键帧的地图设置为融合帧所在的地图
             pKFi->UpdateMap(pMergeMap);
+            // 记录这个关键帧是被哪个当前关键帧融合的
             pKFi->mnMergeCorrectedForKF = mpCurrentKF->mnId;
+            // 把这个关键帧所有权给到融合帧所在地图里
             pMergeMap->AddKeyFrame(pKFi);
+            // 把这个关键帧从当前活跃地图中删掉
             pCurrentMap->EraseKeyFrame(pKFi);
-
+            // 又是没用的代码
             if(pCurrentMap->isImuInitialized())
             {
                 pKFi->SetVelocity(pKFi->mVwbMerge);
             }
         }
-
+        // Step 3.2 更新当前关键帧共视帧窗口所能观测到的地图点的信息
+        //把所有地图点的所有权给到老图里面
+        // 对于每个当前关键帧共视窗口内的所有地图点
         for(MapPoint* pMPi : spLocalWindowMPs)
         {
             if(!pMPi || pMPi->isBad())
                 continue;
-
+            // 把3D点的位置设置成融合矫正之后的位置
             pMPi->SetWorldPos(pMPi->mPosMerge);
+            // 把3D点normal设置成融合矫正之后的法向量
             pMPi->SetNormalVector(pMPi->mNormalVectorMerge);
+            // 把3D点所在的地图设置成融合帧所在的地图
             pMPi->UpdateMap(pMergeMap);
+            // 把3D点添加进融合帧所在地图
             pMergeMap->AddMapPoint(pMPi);
+            // 把3D点从当前活跃地图中删掉
             pCurrentMap->EraseMapPoint(pMPi);
         }
-
+        // Step 3.3 更新剩余信息,如Altas和融合帧所在地图的信息
+        // 在Altas中把老图重新激活
         mpAtlas->ChangeMap(pMergeMap);
+        // 当前地图的信息都到融合帧所在地图里去了,可以设置为bad
         mpAtlas->SetMapBad(pCurrentMap);
+        // 记录地图变化次数
         pMergeMap->IncreaseChangeIndex();
     }
 
 
+    // Step 4 融合两个地图(当前关键帧所在地图和融合帧所在地图)的本质图(其实修改的是spanning tree)
     //Rebuild the essential graph in the local window
+    // 重新构造essential graph的相关信息
+    // 设置当前地图的第一个关键帧不再是第一次生成树了
     pCurrentMap->GetOriginKF()->SetFirstConnection(false);
+    // 从当前关键帧开始反向遍历整个地图 
     pNewChild = mpCurrentKF->GetParent(); // Old parent, it will be the new child of this KF
     pNewParent = mpCurrentKF; // Old child, now it will be the parent of its own parent(we need eliminate this KF from children list in its old parent)
+    // 把当前帧的父亲设置为融合帧
     mpCurrentKF->ChangeParent(mpMergeMatchedKF);
+    // 作者本来想先只在当前关键帧窗口内操作,但是把第二个条件注释了, 可能是为了少些代码, 但是地图太大的时候会影响实时性
     while(pNewChild /*&& spLocalWindowKFs.find(pNewChild) != spLocalWindowKFs.end()*/)
     {
+        // new parent (old child) 不再是 new child (old parent) 的 child 了
         pNewChild->EraseChild(pNewParent); // We remove the relation between the old parent and the new for avoid loop
+        // 记录原先老parent的parent, 用于后续遍历
         KeyFrame * pOldParent = pNewChild->GetParent();
-
+        // 把 new parent 设置为 new child 的 parent (父子关系互换)
         pNewChild->ChangeParent(pNewParent);
         //cout << "The new parent of KF " << pNewChild->mnId << " was " << pNewChild->GetParent()->mnId << endl;
 
+        // 赋值指针, 用于遍历下一组父子
         pNewParent = pNewChild;
         pNewChild = pOldParent;
 
     }
 
     //Update the connections between the local window
+    // 更新融合帧局部的连接关系
     mpMergeMatchedKF->UpdateConnections();
     //cout << "MERGE-VISUAL: Essential graph rebuilded" << endl;
 
 
     //std::copy(spMapPointCurrent.begin(), spMapPointCurrent.end(), std::back_inserter(vpCheckFuseMapPoint));
+    // 重新拿到融合帧局部的共视帧窗窗口
     vpMergeConnectedKFs = mpMergeMatchedKF->GetVectorCovisibleKeyFrames();
     vpMergeConnectedKFs.push_back(mpMergeMatchedKF);
+    // !bug 这里前面已经做过了, 所以这里重复添加了两遍点
     vpCheckFuseMapPoint.reserve(spMapPointMerge.size());
     std::copy(spMapPointMerge.begin(), spMapPointMerge.end(), std::back_inserter(vpCheckFuseMapPoint));
 
     // Project MapPoints observed in the neighborhood of the merge keyframe
     // into the current keyframe and neighbors using corrected poses.
     // Fuse duplications.
+    // Step 5 把融合关键帧的共视窗口里的地图点投到当前关键帧的共视窗口里,把重复的点融合掉(用老的位置,代替新的位置)
     SearchAndFuse(vCorrectedSim3, vpCheckFuseMapPoint);
 
     // Update connectivity
+    // Step 6 再次更新链接关系
+    // 更新当前关键帧共视窗口内所有关键帧的连接
     for(KeyFrame* pKFi : spLocalWindowKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1652,6 +2000,7 @@ void LoopClosing::MergeLocal()
 
         pKFi->UpdateConnections();
     }
+    // 更新融合关键帧共视窗口内所有关键帧的连接
     for(KeyFrame* pKFi : spMergeConnectedKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1662,27 +2011,34 @@ void LoopClosing::MergeLocal()
 
     bool bStop = false;
     Verbose::PrintMess("MERGE: Start local BA ", Verbose::VERBOSITY_DEBUG);
+    // 为Local BA的接口, 把set转为vector
+    // Step 7 焊缝BA(Welding BA)
     vpLocalCurrentWindowKFs.clear();
     vpMergeConnectedKFs.clear();
     std::copy(spLocalWindowKFs.begin(), spLocalWindowKFs.end(), std::back_inserter(vpLocalCurrentWindowKFs));
     std::copy(spMergeConnectedKFs.begin(), spMergeConnectedKFs.end(), std::back_inserter(vpMergeConnectedKFs));
     if (mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO)
+    //! 没有用的代码
     {
         Optimizer::MergeInertialBA(mpLocalMapper->GetCurrKF(),mpMergeMatchedKF,&bStop, mpCurrentKF->GetMap(),vCorrectedSim3);
     }
     else
     {
+        // 运行的 welding BA , 优化所有的当前关键帧共视窗口里的关键帧和地图点, 固定所有融合帧共视窗口里的帧
         Optimizer::LocalBundleAdjustment(mpCurrentKF, vpLocalCurrentWindowKFs, vpMergeConnectedKFs,&bStop);
     }
 
     // Loop closed. Release Local Mapping.
+    // 在welding BA 之后我们就可以继续建图了
     mpLocalMapper->Release();
 
     Verbose::PrintMess("MERGE: Finish the LBA", Verbose::VERBOSITY_DEBUG);
 
 
     ////
+    // Step 8 把之前的局部信息传递到整个当前帧所在地图中
     //Update the non critical area from the current map to the merged map
+    // 把前面优位姿优化的结果传递到地图中其他的关键帧
     vector<KeyFrame*> vpCurrentMapKFs = pCurrentMap->GetAllKeyFrames();
     vector<MapPoint*> vpCurrentMapMPs = pCurrentMap->GetAllMapPoints();
 
@@ -1697,8 +2053,11 @@ void LoopClosing::MergeLocal()
         {
             if(mpTracker->mSensor == System::MONOCULAR)
             {
+                // 锁住当前地图
                 unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
 
+
+                // Step 8.1 拿到当前帧所在地图里的所有关键帧, 重复之前的过程, 不过这里是对于地图里剩余的所有的关键帧
                 for(KeyFrame* pKFi : vpCurrentMapKFs)
                 {
                     if(!pKFi || pKFi->isBad() || pKFi->GetMap() != pCurrentMap)
@@ -1774,8 +2133,11 @@ void LoopClosing::MergeLocal()
         }
 
         // Optimize graph (and update the loop position for each element form the begining to the end)
+        // Step 8.2 本质图优化
         if(mpTracker->mSensor != System::MONOCULAR)
-        {
+        {   
+            //固定 : 所有融合帧共视窗口内的关键帧 + 所有当前关键帧共视窗口内的关键帧
+            //优化:  当前关键帧所在地图里的所有关键帧(除了当前关键帧共视窗口内的关键帧) + 当前地图里的所有地图点
             Optimizer::OptimizeEssentialGraph(mpCurrentKF, vpMergeConnectedKFs, vpLocalCurrentWindowKFs, vpCurrentMapKFs, vpCurrentMapMPs);
         }
 
@@ -1785,6 +2147,7 @@ void LoopClosing::MergeLocal()
             unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
             unique_lock<mutex> mergeLock(pMergeMap->mMutexMapUpdate); // We remove the Kfs and MPs in the merged area from the old map
 
+            // 确保融合后信息被更新
             for(KeyFrame* pKFi : vpCurrentMapKFs)
             {
                 if(!pKFi || pKFi->isBad() || pKFi->GetMap() != pCurrentMap)
@@ -1810,10 +2173,15 @@ void LoopClosing::MergeLocal()
         }
     }
 
+
+    //Essential graph 优化后可以重新开始局部建图了
     mpLocalMapper->Release();
 
     Verbose::PrintMess("MERGE:Completed!!!!!", Verbose::VERBOSITY_DEBUG);
 
+    // 如果之前停掉了全局的BA,就开启全局BA
+    // 这里没有imu, 所以isImuInitialized一定是false, 所以第二个条件一定是true 
+    // Step 9 全局BA
     if(bRelaunchBA && (!pCurrentMap->isImuInitialized() || (pCurrentMap->KeyFramesInMap()<200 && mpAtlas->CountMaps()==1)))
     {
         // Launch a new thread to perform Global Bundle Adjustment
@@ -1821,40 +2189,50 @@ void LoopClosing::MergeLocal()
         mbRunningGBA = true;
         mbFinishedGBA = false;
         mbStopGBA = false;
+        // 重新执行全局BA
         mpThreadGBA = new thread(&LoopClosing::RunGlobalBundleAdjustment,this, pMergeMap, mpCurrentKF->mnId);
     }
 
+    // 添加融合边(这里不是参与优化的边,只是记录)
     mpMergeMatchedKF->AddMergeEdge(mpCurrentKF);
     mpCurrentKF->AddMergeEdge(mpMergeMatchedKF);
 
     pCurrentMap->IncreaseChangeIndex();
     pMergeMap->IncreaseChangeIndex();
-
+    // altas移除不好的地图
     mpAtlas->RemoveBadMaps();
 
 }
 
+/**
+ * @brief 带imu情况下的地图融合, 这个函数90%的内容都没有被用上,迷
+ */
 void LoopClosing::MergeLocal2()
 {
     cout << "Merge detected!!!!" << endl;
-
+    // 没用上
     int numTemporalKFs = 11; //TODO (set by parameter): Temporal KFs in the local window if the map is inertial.
 
     //Relationship to rebuild the essential graph, it is used two times, first in the local window and later in the rest of the map
+    // 用来重新构造Essential Graph
     KeyFrame* pNewChild;
     KeyFrame* pNewParent;
-
+   
+    // 没用上
     vector<KeyFrame*> vpLocalCurrentWindowKFs;
     vector<KeyFrame*> vpMergeConnectedKFs;
 
+    // 记录用初始Sim3 计算出来的当前关键帧局部共视帧窗口内的所有关键帧矫正前的值和矫正后的初始值
     KeyFrameAndPose CorrectedSim3, NonCorrectedSim3;
     // NonCorrectedSim3[mpCurrentKF]=mg2oLoopScw;
 
     // Flag that is true only when we stopped a running BA, in this case we need relaunch at the end of the merge
+    // 记录要不要重新进行全局ba
     bool bRelaunchBA = false;
 
     cout << "Check Full Bundle Adjustment" << endl;
     // If a Global Bundle Adjustment is running, abort it
+    // ! bug, 这里停掉的GBA不会在relaunch, 后面都没有用bRelaunchBA这个变量
     if(isRunningGBA())
     {
         unique_lock<mutex> lock(mMutexGBA);
@@ -1872,6 +2250,7 @@ void LoopClosing::MergeLocal2()
 
 
     cout << "Request Stop Local Mapping" << endl;
+    // 停下局部建图
     mpLocalMapper->RequestStop();
     // Wait until Local Mapping has effectively stopped
     while(!mpLocalMapper->isStopped())
@@ -1880,41 +2259,50 @@ void LoopClosing::MergeLocal2()
     }
     cout << "Local Map stopped" << endl;
 
+    // 当前关键帧地图的指针
     Map* pCurrentMap = mpCurrentKF->GetMap();
+    // 融合关键帧地图的指针
     Map* pMergeMap = mpMergeMatchedKF->GetMap();
-
+    // Step 1 利用之前计算的sim3相关信息, 把整个当前地图变换到融合帧所在地图
     {
+        // sold 是之前sim3中计算的correction,用来把当前关键帧所在的地图位姿带到融合关键帧所在的地图
         float s_on = mSold_new.scale();
         cv::Mat R_on = Converter::toCvMat(mSold_new.rotation().toRotationMatrix());
         cv::Mat t_on = Converter::toCvMat(mSold_new.translation());
-
+        // 锁住altas更新地图
         unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
 
         mpLocalMapper->EmptyQueue();
 
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+        // 是否带尺度
         bool bScaleVel=false;
         if(s_on!=1)
             bScaleVel=true;
+        // 利用sim3信息把整个当前地图转到融合帧所在地图
         mpAtlas->GetCurrentMap()->ApplyScaledRotation(R_on,s_on,bScaleVel,t_on);
+        // 更具尺度信息更新imu信息
         mpTracker->UpdateFrameIMU(s_on,mpCurrentKF->GetImuBias(),mpTracker->GetLastKeyFrame());
 
         std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
     }
-
+    // Step 2 如果地图没有成熟,在这里进行一次InertialOptimization
     const int numKFnew=pCurrentMap->KeyFramesInMap();
-
+    // imu模式下,且地图没有成熟
     if((mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO)&& !pCurrentMap->GetIniertialBA2()){
         // Map is not completly initialized
         Eigen::Vector3d bg, ba;
         bg << 0., 0., 0.;
         ba << 0., 0., 0.;
+        // 优化当前地图中参数bg,ba
         Optimizer::InertialOptimization(pCurrentMap,bg,ba);
         IMU::Bias b (ba[0],ba[1],ba[2],bg[0],bg[1],bg[2]);
         unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
+        // 用优化得到的 bias 更新地图
         mpTracker->UpdateFrameIMU(1.0f,b,mpTracker->GetLastKeyFrame());
 
         // Set map initialized
+        // 设置地图已经成熟
         pCurrentMap->SetIniertialBA2();
         pCurrentMap->SetIniertialBA1();
         pCurrentMap->SetImuInitialized();
@@ -1927,11 +2315,11 @@ void LoopClosing::MergeLocal2()
         unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
         unique_lock<mutex> mergeLock(pMergeMap->mMutexMapUpdate); // We remove the Kfs and MPs in the merged area from the old map
 
-
+        // 融合帧所在地图的所有关键帧和地图点
         vector<KeyFrame*> vpMergeMapKFs = pMergeMap->GetAllKeyFrames();
         vector<MapPoint*> vpMergeMapMPs = pMergeMap->GetAllMapPoints();
 
-
+        // 遍历每个融合帧所在地图的关键帧
         for(KeyFrame* pKFi : vpMergeMapKFs)
         {
             if(!pKFi || pKFi->isBad() || pKFi->GetMap() != pMergeMap)
@@ -1940,22 +2328,25 @@ void LoopClosing::MergeLocal2()
             }
 
             // Make sure connections are updated
+            // 把关键帧从融合帧所在地图删掉,从融合帧所在地图删掉
             pKFi->UpdateMap(pCurrentMap);
             pCurrentMap->AddKeyFrame(pKFi);
             pMergeMap->EraseKeyFrame(pKFi);
         }
-
+        // 遍历每个融合帧所在地图的地图点
         for(MapPoint* pMPi : vpMergeMapMPs)
         {
             if(!pMPi || pMPi->isBad() || pMPi->GetMap() != pMergeMap)
                 continue;
 
+            // 把地图点添加到当前帧所在地图,从融合帧所在地图删掉
             pMPi->UpdateMap(pCurrentMap);
             pCurrentMap->AddMapPoint(pMPi);
             pMergeMap->EraseMapPoint(pMPi);
         }
 
         // Save non corrected poses (already merged maps)
+        // 存下所有关键帧在融合矫正之前的位姿
         vector<KeyFrame*> vpKFs = pCurrentMap->GetAllKeyFrames();
         for(KeyFrame* pKFi : vpKFs)
         {
@@ -1984,12 +2375,14 @@ void LoopClosing::MergeLocal2()
     vector<MapPoint*> vpCheckFuseMapPoint; // MapPoint vector from current map to allow to fuse duplicated points with the old map (merge)
     vector<KeyFrame*> vpCurrentConnectedKFs;
 
+    // 拿出融合帧的局部窗口, 确保最后是(1+5), 1: 融合帧自己 2: 5个共视关键帧
     mvpMergeConnectedKFs.push_back(mpMergeMatchedKF);
     vector<KeyFrame*> aux = mpMergeMatchedKF->GetVectorCovisibleKeyFrames();
     mvpMergeConnectedKFs.insert(mvpMergeConnectedKFs.end(), aux.begin(), aux.end());
     if (mvpMergeConnectedKFs.size()>6)
         mvpMergeConnectedKFs.erase(mvpMergeConnectedKFs.begin()+6,mvpMergeConnectedKFs.end());
 
+    // 拿出当前关键帧的局部窗口, 确保最后是(1+5), 1: 融合帧自己 2: 5个共视关键帧
     mpCurrentKF->UpdateConnections();
     vpCurrentConnectedKFs.push_back(mpCurrentKF);
     aux = mpCurrentKF->GetVectorCovisibleKeyFrames();
@@ -1997,6 +2390,7 @@ void LoopClosing::MergeLocal2()
     if (vpCurrentConnectedKFs.size()>6)
         vpCurrentConnectedKFs.erase(vpCurrentConnectedKFs.begin()+6,vpCurrentConnectedKFs.end());
 
+    // 所有融合帧局部窗口的地图点
     set<MapPoint*> spMapPointMerge;
     for(KeyFrame* pKFi : mvpMergeConnectedKFs)
     {
@@ -2009,8 +2403,10 @@ void LoopClosing::MergeLocal2()
     vpCheckFuseMapPoint.reserve(spMapPointMerge.size());
     std::copy(spMapPointMerge.begin(), spMapPointMerge.end(), std::back_inserter(vpCheckFuseMapPoint));
 
+    // 把融合帧所在局部窗口的地图点投向当前关键帧所在窗口,移除重复的点.(新值用旧值代替)
     SearchAndFuse(vpCurrentConnectedKFs, vpCheckFuseMapPoint);
 
+    // 更新当前关键帧共视窗口内所有关键帧的连接
     for(KeyFrame* pKFi : vpCurrentConnectedKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -2018,6 +2414,7 @@ void LoopClosing::MergeLocal2()
 
         pKFi->UpdateConnections();
     }
+    // 更新融合关键帧共视窗口内所有关键帧的连接
     for(KeyFrame* pKFi : mvpMergeConnectedKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -2034,6 +2431,7 @@ void LoopClosing::MergeLocal2()
     // Perform BA
     bool bStopFlag=false;
     KeyFrame* pCurrKF = mpTracker->GetLastKeyFrame();
+    // Step 3 在这里进行welding BA
     Optimizer::MergeInertialBA(pCurrKF, mpMergeMatchedKF, &bStopFlag, pCurrentMap,CorrectedSim3);
 
     // Release Local Mapping.
@@ -2049,6 +2447,7 @@ void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector
 
     int total_replaces = 0;
 
+    // 遍历每个关键帧
     for(KeyFrameAndPose::const_iterator mit=CorrectedPosesMap.begin(), mend=CorrectedPosesMap.end(); mit!=mend;mit++)
     {
         int num_replaces = 0;
@@ -2198,6 +2597,7 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
     if(!bImuInit)
         Optimizer::GlobalBundleAdjustemnt(pActiveMap,10,&mbStopGBA,nLoopKF,false);
     else
+        // 仅有一个地图且内部关键帧<200，并且IMU完成了第一阶段初始化后才会进行下面
         Optimizer::FullInertialBA(pActiveMap,7,false,nLoopKF,&mbStopGBA);
 
 #ifdef REGISTER_TIMES
@@ -2207,7 +2607,7 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
     vTimeFullGBA_ms.push_back(timeFullGBA);
 #endif
 
-
+	// 记录GBA已经迭代次数,用来检查全局BA过程是否是因为意外结束的
     int idx =  mnFullBAIdx;
     // Optimizer::GlobalBundleAdjustemnt(mpMap,10,&mbStopGBA,nLoopKF,false);
 

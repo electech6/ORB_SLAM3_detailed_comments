@@ -43,9 +43,11 @@
 namespace ORB_SLAM3
 {
 
+// 打印中间信息
 class Verbose
 {
 public:
+    // 显示信息量程度
     enum eLevel
     {
         VERBOSITY_QUIET=0,

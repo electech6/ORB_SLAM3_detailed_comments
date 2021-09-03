@@ -27,7 +27,9 @@ namespace ORB_SLAM3
 long unsigned int MapPoint::nNextId=0;
 mutex MapPoint::mGlobalMutex;
 
-MapPoint::MapPoint():
+/** 
+ * @brief 构造函数
+ */
     mnFirstKFid(0), mnFirstFrame(0), nObs(0), mnTrackReferenceForFrame(0),
     mnLastFrameSeen(0), mnBALocalForKF(0), mnFuseCandidateForKF(0), mnLoopPointForKF(0), mnCorrectedByKF(0),
     mnCorrectedReference(0), mnBAGlobalForKF(0), mnVisible(1), mnFound(1), mbBad(false),
@@ -36,6 +38,9 @@ MapPoint::MapPoint():
     mpReplaced = static_cast<MapPoint*>(NULL);
 }
 
+/** 
+ * @brief 构造函数
+ */
 MapPoint::MapPoint(const cv::Mat &Pos, KeyFrame *pRefKF, Map* pMap):
     mnFirstKFid(pRefKF->mnId), mnFirstFrame(pRefKF->mnFrameId), nObs(0), mnTrackReferenceForFrame(0),
     mnLastFrameSeen(0), mnBALocalForKF(0), mnFuseCandidateForKF(0), mnLoopPointForKF(0), mnCorrectedByKF(0),
@@ -56,6 +61,9 @@ MapPoint::MapPoint(const cv::Mat &Pos, KeyFrame *pRefKF, Map* pMap):
     mnId=nNextId++;
 }
 
+/** 
+ * @brief 构造函数
+ */
 MapPoint::MapPoint(const double invDepth, cv::Point2f uv_init, KeyFrame* pRefKF, KeyFrame* pHostKF, Map* pMap):
     mnFirstKFid(pRefKF->mnId), mnFirstFrame(pRefKF->mnFrameId), nObs(0), mnTrackReferenceForFrame(0),
     mnLastFrameSeen(0), mnBALocalForKF(0), mnFuseCandidateForKF(0), mnLoopPointForKF(0), mnCorrectedByKF(0),
@@ -77,6 +85,9 @@ MapPoint::MapPoint(const double invDepth, cv::Point2f uv_init, KeyFrame* pRefKF,
     mnId=nNextId++;
 }
 
+/** 
+ * @brief 构造函数
+ */
 MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF):
     mnFirstKFid(-1), mnFirstFrame(pFrame->mnId), nObs(0), mnTrackReferenceForFrame(0), mnLastFrameSeen(0),
     mnBALocalForKF(0), mnFuseCandidateForKF(0),mnLoopPointForKF(0), mnCorrectedByKF(0),
@@ -120,6 +131,10 @@ MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF
     mnId=nNextId++;
 }
 
+/**
+ * @brief 设定该mp的世界坐标
+ * @param Pos         坐标值
+ */
 void MapPoint::SetWorldPos(const cv::Mat &Pos)
 {
     unique_lock<mutex> lock2(mGlobalMutex);
@@ -128,12 +143,18 @@ void MapPoint::SetWorldPos(const cv::Mat &Pos)
     mWorldPosx = cv::Matx31f(Pos.at<float>(0), Pos.at<float>(1), Pos.at<float>(2));
 }
 
+/**
+ * @brief 返回该mp的世界坐标
+ */
 cv::Mat MapPoint::GetWorldPos()
 {
     unique_lock<mutex> lock(mMutexPos);
     return mWorldPos.clone();
 }
 
+/**
+ * @brief 获取平均观测方向
+ */
 cv::Mat MapPoint::GetNormal()
 {
     unique_lock<mutex> lock(mMutexPos);
@@ -242,7 +263,10 @@ std::map<KeyFrame*, std::tuple<int,int>>  MapPoint::GetObservations()
     return mObservations;
 }
 
-// 被观测到的相机数目，单目+1，双目或RGB-D则+2
+/**
+ * @brief 返回被观测次数，双目一帧算两次，左右目各算各的
+ * @return nObs
+ */
 int MapPoint::Observations()
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -280,6 +304,10 @@ void MapPoint::SetBadFlag()
     mpMap->EraseMapPoint(this);
 }
 
+/**
+ * @brief 判断该点是否已经被替换，因为替换并没有考虑普通帧的替换，不利于下一帧的跟踪，所以要坐下标记
+ * @return 替换的新的点
+ */
 MapPoint* MapPoint::GetReplaced()
 {
     unique_lock<mutex> lock1(mMutexFeatures);
@@ -329,9 +357,10 @@ void MapPoint::Replace(MapPoint* pMP)
 
         tuple<int,int> indexes = mit -> second;
         int leftIndex = get<0>(indexes), rightIndex = get<1>(indexes);
-
+        // 2.1 判断新点是否已经在pKF里面
         if(!pMP->IsInKeyFrame(pKF))
         {
+            // 如果不在，替换特征点与mp的匹配关系
             if(leftIndex != -1){
                 pKF->ReplaceMapPointMatch(leftIndex, pMP);
                 pMP->AddObservation(pKF,leftIndex);
@@ -341,6 +370,8 @@ void MapPoint::Replace(MapPoint* pMP)
                 pMP->AddObservation(pKF,rightIndex);
             }
         }
+        // 如果新的MP在之前MP对应的关键帧里面，就撞车了。
+        // 本来目的想新旧MP融为一个，这样以来一个点有可能对应两个特征点，这样是决不允许的，所以删除旧的，不动新的
         else
         {
             if(leftIndex != -1){
@@ -361,6 +392,9 @@ void MapPoint::Replace(MapPoint* pMP)
     mpMap->EraseMapPoint(this);
 }
 
+/**
+ * @brief 判断这个点是否设置为bad了
+ */
 bool MapPoint::isBad()
 {
     unique_lock<mutex> lock1(mMutexFeatures,std::defer_lock);
@@ -370,19 +404,37 @@ bool MapPoint::isBad()
     return mbBad;
 }
 
+/**
+ * @brief Increase Visible
+ *
+ * Visible表示：
+ * 1. 该MapPoint在某些帧的视野范围内，通过Frame::isInFrustum()函数判断
+ * 2. 该MapPoint被这些帧观测到，但并不一定能和这些帧的特征点匹配上
+ *    例如：有一个MapPoint（记为M），在某一帧F的视野范围内，
+ *    但并不表明该点M可以和F这一帧的某个特征点能匹配上
+ */
 void MapPoint::IncreaseVisible(int n)
 {
     unique_lock<mutex> lock(mMutexFeatures);
     mnVisible+=n;
 }
 
+/**
+ * @brief Increase Found
+ *
+ * 能找到该点的帧数+n，n默认为1
+ * @see Tracking::TrackLocalMap()
+ */
 void MapPoint::IncreaseFound(int n)
 {
     unique_lock<mutex> lock(mMutexFeatures);
     mnFound+=n;
 }
 
-// 计算被找到的比例
+/**
+ * @brief 返回被找到/被看到
+ * @return 被找到/被看到
+ */
 float MapPoint::GetFoundRatio()
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -478,18 +530,25 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
     {
         unique_lock<mutex> lock(mMutexFeatures);
+        // 最好的描述子，该描述子相对于其他描述子有最小的距离中值
+        // 简化来讲，中值代表了这个描述子到其它描述子的平均距离
+        // 最好的描述子就是和其它描述子的平均距离最小
         mDescriptor = vDescriptors[BestIdx].clone();
     }
 }
 
-//获取当前地图点的描述子
+/**
+ * @brief 返回描述子
+ */
 cv::Mat MapPoint::GetDescriptor()
 {
     unique_lock<mutex> lock(mMutexFeatures);
     return mDescriptor.clone();
 }
 
-//获取当前地图点在某个关键帧的观测中，对应的特征点的ID
+/**
+ * @brief 返回这个点在关键帧中对应的特征点id
+ */
 tuple<int,int> MapPoint::GetIndexInKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -499,6 +558,9 @@ tuple<int,int> MapPoint::GetIndexInKeyFrame(KeyFrame *pKF)
         return tuple<int,int>(-1,-1);
 }
 
+/**
+ * @brief return (mObservations.count(pKF));
+ */
 bool MapPoint::IsInKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -589,6 +651,10 @@ void MapPoint::UpdateNormalAndDepth()
     }
 }
 
+/**
+ * @brief 设置平均观测方向
+ * @param normal         观测方向
+ */
 void MapPoint::SetNormalVector(cv::Mat& normal)
 {
     unique_lock<mutex> lock3(mMutexPos);
@@ -596,12 +662,18 @@ void MapPoint::SetNormalVector(cv::Mat& normal)
     mNormalVectorx = cv::Matx31f(mNormalVector.at<float>(0), mNormalVector.at<float>(1), mNormalVector.at<float>(2));
 }
 
+/**
+ * @brief 返回最近距离
+ */
 float MapPoint::GetMinDistanceInvariance()
 {
     unique_lock<mutex> lock(mMutexPos);
     return 0.8f*mfMinDistance;
 }
 
+/**
+ * @brief 返回最远距离
+ */
 float MapPoint::GetMaxDistanceInvariance()
 {
     unique_lock<mutex> lock(mMutexPos);

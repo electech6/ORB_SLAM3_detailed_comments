@@ -1640,7 +1640,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 					// 特征点本身直接乘缩放倍数就可以了
                     keypoint->pt *= scale;
                 }
-
+                // ?TODO vLappingArea 
                 if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
                     _keypoints.at(stereoIndex) = (*keypoint);
                     desc.row(i).copyTo(descriptors.row(stereoIndex));
