@@ -1,12 +1,12 @@
 # ORB-SLAM3 超详细注释
 
-
 -by 计算机视觉life 公众号旗下开源学习小组：SLAM研习社
 
+![DEMO](https://github.com/electech6/ORB_SLAM3_detailed_comments/blob/master/demo.gif)
 
-关注公众号：计算机视觉life，第一时间获取SLAM、三维视觉干货
+![课程大纲](https://github.com/electech6/ORB_SLAM3_detailed_comments/blob/master/outline.png)
 
-![qrcode](https://github.com/electech6/ORBSLAM2_detailed_comments/blob/master/qrcode.jpg)
+[ORB-SLAM3 逐行源码讲解](https://appafc4omci9700.h5.xiaoeknow.com/content_page/eyJ0eXBlIjoiMyIsInJlc291cmNlX3R5cGUiOjI1LCJyZXNvdXJjZV9pZCI6IiIsImFwcF9pZCI6ImFwcGFmYzRvbWNpOTcwMCIsInByb2R1Y3RfaWQiOiJ0ZXJtXzYxMzcxNTEwODY4MzNfQXRXa2YzIiwiZXhwYW5kX2RhdGEiOltdfQ)
 
 ----
 
@@ -158,14 +158,14 @@ and add at the end the following line. Replace PATH by the folder where you clon
   ```
   export ROS_PACKAGE_PATH=${ROS_PACKAGE_PATH}:PATH/ORB_SLAM3/Examples/ROS
   ```
-  
+
 2. Execute `build_ros.sh` script:
 
   ```
   chmod +x build_ros.sh
   ./build_ros.sh
   ```
-  
+
 ### Running Monocular Node
 For a monocular input from topic `/camera/image_raw` run node ORB_SLAM3/Mono. You will need to provide the vocabulary file and a settings file. See the monocular examples above.
 
@@ -193,7 +193,7 @@ For a stereo input from topics `/camera/left/image_raw` and `/camera/right/image
   ```
   rosrun ORB_SLAM3 Stereo_Inertial PATH_TO_VOCABULARY PATH_TO_SETTINGS_FILE ONLINE_RECTIFICATION [EQUALIZATION]	
   ```
-  
+
 ### Running RGB_D Node
 For an RGB-D input from topics `/camera/rgb/image_raw` and `/camera/depth_registered/image_raw`, run node ORB_SLAM3/RGBD. You will need to provide the vocabulary file and a settings file. See the RGB-D example above.
 
@@ -205,15 +205,15 @@ For an RGB-D input from topics `/camera/rgb/image_raw` and `/camera/depth_regist
   ```
   roscore
   ```
-  
+
   ```
   rosrun ORB_SLAM3 Stereo_Inertial Vocabulary/ORBvoc.txt Examples/Stereo-Inertial/EuRoC.yaml true
   ```
-  
+
   ```
   rosbag play --pause V1_02_medium.bag /cam0/image_raw:=/camera/left/image_raw /cam1/image_raw:=/camera/right/image_raw /imu0:=/imu
   ```
-  
+
 Once ORB-SLAM3 has loaded the vocabulary, press space in the rosbag tab.
 
 **Remark:** For rosbags from TUM-VI dataset, some play issue may appear due to chunk size. One possible solution is to rebag them with the default chunk size, for example:
