@@ -1217,6 +1217,7 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
     cout << "IMU accelerometer noise: " << Na << " m/s^2/sqrt(Hz)" << endl;
     cout << "IMU accelerometer walk: " << Naw << " m/s^3/sqrt(Hz)" << endl;
 
+    // 噪声从连续到离散差了一个sqrt(freq)   而随机游走从连续到离散差了一个 1/sqrt(freq)
     mpImuCalib = new IMU::Calib(Tbc,Ng*sf,Na*sf,Ngw/sf,Naw/sf);
 
     mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
