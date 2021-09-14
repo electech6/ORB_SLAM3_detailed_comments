@@ -4383,7 +4383,7 @@ bool Tracking::Relocalization()
 }
 
 //整个追踪线程执行复位操作
-void Tracking::Reset()
+void Tracking::Reset(bool bLocMap)
 {
     Verbose::PrintMess("System Reseting", Verbose::VERBOSITY_NORMAL);
 	//基本上是挨个请求各个线程终止

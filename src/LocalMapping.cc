@@ -773,7 +773,9 @@ void LocalMapping::CreateNewMapPoints()
                     continue;
                 // 归一化成为齐次坐标,然后提取前面三个维度作为欧式坐标
                 // Euclidean coordinates
-                x3D = x3D_h.get_minor<3,1>(0,0) / x3D_h(3);
+                // x3D = x3D_h.get_minor<3,1>(0,0) / x3D_h(3);
+                x3D = cv::Matx31f(x3D_h.get_minor<3,1>(0,0)(0) / x3D_h(3), x3D_h.get_minor<3,1>(0,0)(1) / x3D_h(3), x3D_h.get_minor<3,1>(0,0)(2) / x3D_h(3));
+
                 bEstimated = true;
 
             }
