@@ -922,8 +922,13 @@ Eigen::Matrix3d Skew(const Eigen::Vector3d &w)
     return W;
 }
 
+// BUG 应该改成svd.matrixV().transpose()
 Eigen::Matrix3d NormalizeRotation(const Eigen::Matrix3d &R)
 {
+    // 这里关注一下
+    // 1. 对于行列数一样的矩阵，Eigen::ComputeThinU | Eigen::ComputeThinV    与    Eigen::ComputeFullU | Eigen::ComputeFullV 一样
+    // 2. 对于行列数不同的矩阵，例如3*4 或者 4*3 矩阵只有3个奇异向量，计算的时候如果是Thin 那么得出的UV矩阵列数只能是3，如果是full那么就是4
+    // 3. thin会损失一部分数据，但是会加快计算，对于大型矩阵解算方程时，可以用thin加速得到结果
     Eigen::JacobiSVD<Eigen::Matrix3d> svd(R,Eigen::ComputeFullU | Eigen::ComputeFullV);
     return svd.matrixU()*svd.matrixV();
 }
