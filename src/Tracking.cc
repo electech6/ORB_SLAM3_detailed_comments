@@ -4582,12 +4582,25 @@ void Tracking::InformOnlyTracking(const bool &flag)
     mbOnlyTracking = flag;
 }
 
+/**
+ * @brief 更新了关键帧的位姿，但需要修改普通帧的位姿，因为正常跟踪需要普通帧
+ * localmapping中初始化imu中使用，速度的走向（仅在imu模式使用），最开始速度定义于imu初始化时，每个关键帧都根据位移除以时间得到，经过非线性优化保存于KF中.
+ * 之后使用本函数，让上一帧与当前帧分别与他们对应的上一关键帧做速度叠加得到，后面新的frame速度由上一个帧速度决定，如果使用匀速模型（大多数情况下），通过imu积分更新速度。
+ * 新的关键帧继承于对应帧
+ * @param  s 尺度
+ * @param  b 初始化后第一帧的偏置
+ * @param  pCurrentKeyFrame 当前关键帧
+ */
 void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurrentKeyFrame)
 {
     Map * pMap = pCurrentKeyFrame->GetMap();
-    unsigned int index = mnFirstFrameId;
+    unsigned int index = mnFirstFrameId;  // unused
+
+    // 每一帧的参考关键帧
     list<ORB_SLAM3::KeyFrame*>::iterator lRit = mlpReferences.begin();
-    list<bool>::iterator lbL = mlbLost.begin();
+    list<bool>::iterator lbL = mlbLost.begin();  // 对应帧是否跟踪丢失
+    // mlRelativeFramePoses 存放的是Tcr
+    // 三个变量一一对应
     for(list<cv::Mat>::iterator lit=mlRelativeFramePoses.begin(),lend=mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lbL++)
     {
         if(*lbL)
@@ -4605,11 +4618,11 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
             (*lit).rowRange(0,3).col(3)=(*lit).rowRange(0,3).col(3)*s;
         }
     }
-
+    // 设置偏置
     mLastBias = b;
-
+    // 设置上一关键帧，如果说mpLastKeyFrame已经是经过添加的新的kf，而pCurrentKeyFrame还是上一个kf，mpLastKeyFrame直接指向之前的kf
     mpLastKeyFrame = pCurrentKeyFrame;
-
+    // 更新偏置
     mLastFrame.SetNewBias(mLastBias);
     mCurrentFrame.SetNewBias(mLastBias);
 
@@ -4622,10 +4635,12 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
 
     while(!mCurrentFrame.imuIsPreintegrated())
     {
+        // 当前帧需要预积分完毕，这段函数实在localmapping里调用的
         usleep(500);
     }
 
-
+    // frame的mpLastKeyFrame只是用于预积分（imu模式）
+    // TODO 如果上一帧正好是上一帧的上一关键帧（mLastFrame.mpLastKeyFrame与mLastFrame不可能是一个，可以验证一下）
     if(mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId)
     {
         mLastFrame.SetImuPoseVelocity(mLastFrame.mpLastKeyFrame->GetImuRotation(),
@@ -4638,12 +4653,13 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
         Rwb1 = mLastFrame.mpLastKeyFrame->GetImuRotation();
         Vwb1 = mLastFrame.mpLastKeyFrame->GetVelocity();
         t12 = mLastFrame.mpImuPreintegrated->dT;
-
+        // 根据mLastFrame的上一个关键帧的信息（此时已经经过imu初始化了，所以关键帧的信息都是校正后的）以及imu的预积分重新计算上一帧的位姿
         mLastFrame.SetImuPoseVelocity(Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(),
                                       twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaPosition(),
                                       Vwb1 + Gz*t12 + Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity());
     }
 
+    // 当前帧是否做了预积分
     if (mCurrentFrame.mpImuPreintegrated)
     {
         twb1 = mCurrentFrame.mpLastKeyFrame->GetImuPosition();

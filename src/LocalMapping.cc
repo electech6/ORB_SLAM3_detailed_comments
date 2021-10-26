@@ -1600,7 +1600,8 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
     mFirstTs=vpKF.front()->mTimeStamp;
     if(mpCurrentKeyFrame->mTimeStamp-mFirstTs<minTime)
         return;
-
+    
+    // 正在做IMU的初始化，在tracking里面使用，如果为true，暂不添加关键帧
     bInitializing = true;
 
     // 先处理新关键帧，防止堆积且保证数据量充足
@@ -1626,20 +1627,21 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
                 continue;
             if (!(*itKF)->mPrevKF)
                 continue;
-            // Rwb（imu坐标转到初始化前世界坐标系下的坐标）*更新偏置后的速度，可以理解为在世界坐标系下的速度矢量
+            // 初始化时关于速度的预积分定义Ri.t()*(s*Vj - s*Vi - Rwg*g*tij)
             dirG -= (*itKF)->mPrevKF->GetImuRotation()*(*itKF)->mpImuPreintegrated->GetUpdatedDeltaVelocity();
             // 求取实际的速度，位移/时间
             cv::Mat _vel = ((*itKF)->GetImuPosition() - (*itKF)->mPrevKF->GetImuPosition())/(*itKF)->mpImuPreintegrated->dT;
             (*itKF)->SetVelocity(_vel);
             (*itKF)->mPrevKF->SetVelocity(_vel);
         }
+        // dirG = sV1 - sVn + n*Rwg*g*t
         // 归一化
         dirG = dirG/cv::norm(dirG);
         // 原本的重力方向
         cv::Mat gI = (cv::Mat_<float>(3,1) << 0.0f, 0.0f, -1.0f);
         // 求速度方向与重力方向的角轴
         cv::Mat v = gI.cross(dirG);
-        // 求角轴长度
+        // 求角轴模长
         const float nv = cv::norm(v);
         // 求转角大小
         const float cosg = gI.dot(dirG);
@@ -1664,7 +1666,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
     mInitTime = mpTracker->mLastFrame.mTimeStamp-vpKF.front()->mTimeStamp;
 
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    // 计算残差及偏置差，优化尺度重力方向及Ri Rj Vi Vj Pi Pj
+    // 计算残差及偏置差，优化尺度重力方向及速度偏置，偏置先验为0，双目时不优化尺度
     Optimizer::InertialOptimization(mpAtlas->GetCurrentMap(), mRwg, mScale, mbg, mba, mbMonocular, infoInertial, false, false, priorG, priorA);
     std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
 
@@ -1736,10 +1738,11 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
     }
 
 
-    mbNewInit=true;
-    mnKFs=vpKF.size();
-    mIdxInit++;
+    mbNewInit=true;  // 没用到
+    mnKFs=vpKF.size();  // 没用到
+    mIdxInit++;  // 没用到
 
+    // 里面存放的是来到Local线程，但还未处理的关键帧
     for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
     {
         (*lit)->SetBadFlag();

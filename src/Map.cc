@@ -298,6 +298,14 @@ void Map::RotateMap(const cv::Mat &R)
     }
 }
 
+// 恢复尺度及重力方向
+/** imu在localmapping中初始化，LocalMapping::InitializeIMU中使用，误差包含三个残差与两个偏置
+ * 地图融合时也会使用
+ * @param R 初始化时为Rgw
+ * @param s 尺度
+ * @param bScaledVel 将尺度更新到速度
+ * @param t 默认cv::Mat::zeros(cv::Size(1,3),CV_32F)
+ */
 void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScaledVel, const cv::Mat t)
 {
     unique_lock<mutex> lock(mMutexMap);
@@ -310,19 +318,36 @@ void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScale
 
     cv::Mat Tyw = Tyx*Txw;
     Tyw.rowRange(0,3).col(3) = Tyw.rowRange(0,3).col(3)+t;
-    cv::Mat Ryw = Tyw.rowRange(0,3).colRange(0,3);
-    cv::Mat tyw = Tyw.rowRange(0,3).col(3);
+    // Tyw 中旋转部分等于R，平移部分等于t
+    // 做了很多操作，到最后还是得出了一个R跟t？感觉上面的操作像是预留了一些东西，比如在世界坐标系与第一帧有一定Rt时，只不过暂时没有用到
+    cv::Mat Ryw = Tyw.rowRange(0,3).colRange(0,3);  // R
+    cv::Mat tyw = Tyw.rowRange(0,3).col(3);         // t
 
     for(set<KeyFrame*>::iterator sit=mspKeyFrames.begin(); sit!=mspKeyFrames.end(); sit++)
     {
+        // 更新关键帧位姿
+        /**
+         * | Rw2w1  tw2w1 |   *   | Rw1c  s*tw1c  |     =    |  Rw2c     s*Rw2w1*tw1c + tw2w1  |
+         * |   0      1   |       |  0       1    |          |   0                1            |
+         * 这么做比正常乘在旋转上少了个s，后面不需要这个s了，因为所有mp在下面已经全部转到了w2坐标系下，不存在尺度变化了
+         * 
+         * | s*Rw2w1  tw2w1 |   *   | Rw1c    tw1c  |     =    |  s*Rw2c     s*Rw2w1*tw1c + tw2w1  |
+         * |   0        1   |       |  0       1    |          |     0                1            |
+         */
+
         KeyFrame* pKF = *sit;
         cv::Mat Twc = pKF->GetPoseInverse();
         Twc.rowRange(0,3).col(3)*=s;
+
+        // |  Ryc     s*Ryw*twc + tyw  |
+        // |   0           1           |
         cv::Mat Tyc = Tyw*Twc;
+
         cv::Mat Tcy = cv::Mat::eye(4,4,CV_32F);
         Tcy.rowRange(0,3).colRange(0,3) = Tyc.rowRange(0,3).colRange(0,3).t();
         Tcy.rowRange(0,3).col(3) = -Tcy.rowRange(0,3).colRange(0,3)*Tyc.rowRange(0,3).col(3);
         pKF->SetPose(Tcy);
+        // 更新关键帧速度
         cv::Mat Vw = pKF->GetVelocity();
         if(!bScaledVel)
             pKF->SetVelocity(Ryw*Vw);
@@ -332,6 +357,7 @@ void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScale
     }
     for(set<MapPoint*>::iterator sit=mspMapPoints.begin(); sit!=mspMapPoints.end(); sit++)
     {
+        // 更新每一个mp在世界坐标系下的坐标
         MapPoint* pMP = *sit;
         pMP->SetWorldPos(s*Ryw*pMP->GetWorldPos()+tyw);
         pMP->UpdateNormalAndDepth();

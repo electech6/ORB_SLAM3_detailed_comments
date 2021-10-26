@@ -167,6 +167,9 @@ void ImuCamPose::SetParam(const std::vector<Eigen::Matrix3d> &_Rcw, const std::v
     bf = _bf;
 }
 
+/** 
+ * @brief 单目投影
+ */
 Eigen::Vector2d ImuCamPose::Project(const Eigen::Vector3d &Xw, int cam_idx) const
 {
     Eigen::Vector3d Xc = Rcw[cam_idx]*Xw+tcw[cam_idx];
@@ -174,6 +177,10 @@ Eigen::Vector2d ImuCamPose::Project(const Eigen::Vector3d &Xw, int cam_idx) cons
     return pCamera[cam_idx]->project(Xc);
 }
 
+/** 
+ * @brief 双目投影，都是0
+ * @return u v u`
+ */
 Eigen::Vector3d ImuCamPose::ProjectStereo(const Eigen::Vector3d &Xw, int cam_idx) const
 {
     Eigen::Vector3d Pc = Rcw[cam_idx]*Xw+tcw[cam_idx];
@@ -219,6 +226,7 @@ void ImuCamPose::Update(const double *pu)
 
 }
 
+// 更新世界坐标系
 void ImuCamPose::UpdateW(const double *pu)
 {
     Eigen::Vector3d ur, ut;
@@ -606,7 +614,7 @@ void EdgeInertial::linearizeOplus()
     _jacobianOplus[3].block<3,3>(6,0) = -JPa; // OK
 
     // Jacobians wrt Pose 2
-    // _jacobianOplus[3] 9*6矩阵 总体来说就是三个残差分别对pose2的旋转与平移（p）求导
+    // _jacobianOplus[4] 9*6矩阵 总体来说就是三个残差分别对pose2的旋转与平移（p）求导
     _jacobianOplus[4].setZero();
     // rotation
     _jacobianOplus[4].block<3,3>(0,0) = invJr; // OK
@@ -614,7 +622,7 @@ void EdgeInertial::linearizeOplus()
     _jacobianOplus[4].block<3,3>(6,3) = Rbw1*Rwb2; // OK
 
     // Jacobians wrt Velocity 2
-    // _jacobianOplus[3] 9*3矩阵 总体来说就是三个残差分别对pose2的速度求导
+    // _jacobianOplus[5] 9*3矩阵 总体来说就是三个残差分别对pose2的速度求导
     _jacobianOplus[5].setZero();
     _jacobianOplus[5].block<3,3>(3,0) = Rbw1; // OK
 }
@@ -930,6 +938,6 @@ Eigen::Matrix3d NormalizeRotation(const Eigen::Matrix3d &R)
     // 2. 对于行列数不同的矩阵，例如3*4 或者 4*3 矩阵只有3个奇异向量，计算的时候如果是Thin 那么得出的UV矩阵列数只能是3，如果是full那么就是4
     // 3. thin会损失一部分数据，但是会加快计算，对于大型矩阵解算方程时，可以用thin加速得到结果
     Eigen::JacobiSVD<Eigen::Matrix3d> svd(R,Eigen::ComputeFullU | Eigen::ComputeFullV);
-    return svd.matrixU()*svd.matrixV();
+    return svd.matrixU()*svd.matrixV().transpose();
 }
 }
