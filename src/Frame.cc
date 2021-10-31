@@ -946,7 +946,8 @@ void Frame::UndistortKeyPoints()
 
     // Undistort points
     // 函数reshape(int cn,int rows=0) 其中cn为更改后的通道数，rows=0表示这个行将保持原来的参数不变
-    //为了能够直接调用opencv的函数来去畸变，需要先将矩阵调整为2通道（对应坐标x,y） 
+    //为了能够直接调用opencv的函数来去畸变，需要先将矩阵调整为2通道（对应坐标x,y）
+    // cv::undistortPoints最后一个矩阵为空矩阵时，得到的点为归一化坐标点
     mat=mat.reshape(2);
     cv::undistortPoints(mat,mat, static_cast<Pinhole*>(mpCamera)->toK(),mDistCoef,cv::Mat(),mK);
 	//调整回只有一个通道，回归我们正常的处理方式

@@ -26,7 +26,7 @@ namespace ORB_SLAM3
 long unsigned int GeometricCamera::nNextId = 0;
 
 /** 
- * @brief 投影
+ * @brief 相机坐标系下的三维点投影到无畸变像素平面
  * @param p3D 三维点
  * @return 像素坐标
  */
@@ -37,7 +37,7 @@ cv::Point2f Pinhole::project(const cv::Point3f &p3D)
 }
 
 /** 
- * @brief 投影
+ * @brief 相机坐标系下的三维点投影到无畸变像素平面
  * @param m3D 三维点
  * @return 像素坐标
  */
@@ -47,7 +47,7 @@ cv::Point2f Pinhole::project(const cv::Matx31f &m3D)
 }
 
 /** 
- * @brief 投影
+ * @brief 相机坐标系下的三维点投影到无畸变像素平面
  * @param v3D 三维点
  * @return 像素坐标
  */
@@ -59,7 +59,7 @@ cv::Point2f Pinhole::project(const cv::Mat &m3D)
 }
 
 /** 
- * @brief 投影
+ * @brief 相机坐标系下的三维点投影到无畸变像素平面
  * @param p3D 三维点
  * @return 像素坐标
  */
@@ -73,7 +73,7 @@ Eigen::Vector2d Pinhole::project(const Eigen::Vector3d &v3D)
 }
 
 /** 
- * @brief 投影
+ * @brief 相机坐标系下的三维点投影到无畸变像素平面
  * @param p3D 三维点
  * @return 像素坐标
  */
@@ -94,7 +94,7 @@ float Pinhole::uncertainty2(const Eigen::Matrix<double, 2, 1> &p2D)
 /** 
  * @brief 反投影
  * @param p2D 特征点
- * @return 
+ * @return 归一化坐标
  */
 cv::Point3f Pinhole::unproject(const cv::Point2f &p2D)
 {
@@ -105,7 +105,7 @@ cv::Point3f Pinhole::unproject(const cv::Point2f &p2D)
 /** 
  * @brief 反投影
  * @param p2D 特征点
- * @return 
+ * @return 归一化坐标
  */
 cv::Mat Pinhole::unprojectMat(const cv::Point2f &p2D)
 {
@@ -116,7 +116,7 @@ cv::Mat Pinhole::unprojectMat(const cv::Point2f &p2D)
 /** 
  * @brief 反投影
  * @param p2D 特征点
- * @return 
+ * @return 归一化坐标
  */
 cv::Matx31f Pinhole::unprojectMat_(const cv::Point2f &p2D)
 {
@@ -126,7 +126,7 @@ cv::Matx31f Pinhole::unprojectMat_(const cv::Point2f &p2D)
 }
 
 /** 
- * @brief 求解三维点关于二维像素坐标的雅克比矩阵
+ * @brief 求解二维像素坐标关于三维点坐标的雅克比矩阵
  * @param p3D 三维点
  * @return 
  */
@@ -144,7 +144,7 @@ cv::Mat Pinhole::projectJac(const cv::Point3f &p3D)
 }
 
 /** 
- * @brief 求解三维点关于二维像素坐标的雅克比矩阵
+ * @brief 求解二维像素坐标关于三维点坐标的雅克比矩阵
  * @param v3D 三维点
  * @return 
  */
@@ -162,7 +162,13 @@ Eigen::Matrix<double, 2, 3> Pinhole::projectJac(const Eigen::Vector3d &v3D)
 }
 
 /**
- * @brief 求解二维像素坐标关于三维点的雅克比矩阵
+ * @brief 求解归一化坐标关于二维像素坐标的雅克比矩阵，也就是反投影雅可比
+ * u = fx*x + cx  x = (u - cx)/fx 
+ * v = fy*y + cy  y = (v - cy)/fy 
+ * (x, y, 1) 对于 (u, v)求雅可比
+ * 1/fx  0
+ * 0    1/fy
+ * 0     0
  * @param p2D 特征点
  * @return 
  */
@@ -179,7 +185,7 @@ cv::Mat Pinhole::unprojectJac(const cv::Point2f &p2D)
     return Jac;
 }
 
-/** 三角化恢复三维点
+/** 三角化恢复三维点  单目初始化时使用
  * @param vKeys1 第一帧的关键点
  * @param vKeys2 第二帧的关键点
  * @param vMatches12 匹配关系，长度与vKeys1一样，对应位置存放vKeys2中关键点的下标
@@ -231,7 +237,7 @@ cv::Matx33f Pinhole::toK_()
  * @param R12 2->1的旋转
  * @param t12 2->1的平移
  * @param sigmaLevel 特征点1的尺度的平方
- * @param unc 特征点2的尺度的平方
+ * @param unc 特征点2的尺度的平方，1.2^2n
  * @return 三维点恢复的成功与否
  */
 bool Pinhole::epipolarConstrain(GeometricCamera *pCamera2, const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Mat &R12, const cv::Mat &t12, const float sigmaLevel, const float unc)
@@ -243,10 +249,15 @@ bool Pinhole::epipolarConstrain(GeometricCamera *pCamera2, const cv::KeyPoint &k
     cv::Mat F12 = K1.t().inv() * t12x * R12 * K2.inv();
 
     // Epipolar line in second image l = x1'F12 = [a b c]
+    //                      u2,
+    // (u1, v1, 1) * F12 * (v2,) = 0   -->  (a, b, c) * (u2, v2, 1)^t = 0 --> a*u2 + b*v2 + c = 0
+    //                       1
     const float a = kp1.pt.x * F12.at<float>(0, 0) + kp1.pt.y * F12.at<float>(1, 0) + F12.at<float>(2, 0);
     const float b = kp1.pt.x * F12.at<float>(0, 1) + kp1.pt.y * F12.at<float>(1, 1) + F12.at<float>(2, 1);
     const float c = kp1.pt.x * F12.at<float>(0, 2) + kp1.pt.y * F12.at<float>(1, 2) + F12.at<float>(2, 2);
 
+    // 点到直线距离的公式
+    // d = |a*u2 + b*v2 + c| / sqrt(a^2 + b^2)
     const float num = a * kp2.pt.x + b * kp2.pt.y + c;
 
     const float den = a * a + b * b;

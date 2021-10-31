@@ -57,9 +57,10 @@ bool TwoViewReconstruction::Reconstruct(const std::vector<cv::KeyPoint> &vKeys1,
 
     // Fill structures with current keypoints and matches with reference frame
     // Reference Frame: 1, Current Frame: 2
+    // 填写mvMatches12，里面存放的是vKeys1，vKeys2匹配点的索引，
     mvMatches12.clear(); // 存放匹配点的id
     mvMatches12.reserve(mvKeys2.size());
-    mvbMatched1.resize(mvKeys1.size());
+    mvbMatched1.resize(mvKeys1.size());  // 长度与vKeys1，表示对应位置的vKeys1中的点是否有匹配关系
     for (size_t i = 0, iend = vMatches12.size(); i < iend; i++)
     {
         if (vMatches12[i] >= 0)
@@ -78,7 +79,7 @@ bool TwoViewReconstruction::Reconstruct(const std::vector<cv::KeyPoint> &vKeys1,
     vAllIndices.reserve(N);
     vector<size_t> vAvailableIndices;
 
-    // 使用vAllIndices为了保证选不到同一个点
+    // 使用vAllIndices为了保证8个点选不到同一个点
     for (int i = 0; i < N; i++)
     {
         vAllIndices.push_back(i);
@@ -102,7 +103,7 @@ bool TwoViewReconstruction::Reconstruct(const std::vector<cv::KeyPoint> &vKeys1,
 
             mvSets[it][j] = idx;
 
-            // 保证选不到同一个点
+            // 保证选不到同一个点，这么做的话可以删去vAvailableIndices已选点的索引
             vAvailableIndices[randi] = vAvailableIndices.back();
             vAvailableIndices.pop_back();
         }

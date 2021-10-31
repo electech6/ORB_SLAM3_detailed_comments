@@ -58,30 +58,37 @@ namespace ORB_SLAM3 {
             if(tvr) delete tvr;
         }
 
+        // 投影函数
         cv::Point2f project(const cv::Point3f &p3D);
         cv::Point2f project(const cv::Matx31f &m3D);
         cv::Point2f project(const cv::Mat &m3D);
         Eigen::Vector2d project(const Eigen::Vector3d & v3D);
         cv::Mat projectMat(const cv::Point3f& p3D);
 
+        // 返回像素点的不确定性，返回的都是1.0f
         float uncertainty2(const Eigen::Matrix<double,2,1> &p2D);
 
+        // 反投影
         cv::Point3f unproject(const cv::Point2f &p2D);
         cv::Mat unprojectMat(const cv::Point2f &p2D);
         cv::Matx31f unprojectMat_(const cv::Point2f &p2D);
 
-
+        // 投影雅可比
         cv::Mat projectJac(const cv::Point3f &p3D);
         Eigen::Matrix<double,2,3> projectJac(const Eigen::Vector3d& v3D);
 
+        // 反投影雅可比（未使用）
         cv::Mat unprojectJac(const cv::Point2f &p2D);
 
+        // 三角化恢复三维点
         bool ReconstructWithTwoViews(const std::vector<cv::KeyPoint>& vKeys1, const std::vector<cv::KeyPoint>& vKeys2, const std::vector<int> &vMatches12,
                                              cv::Mat &R21, cv::Mat &t21, std::vector<cv::Point3f> &vP3D, std::vector<bool> &vbTriangulated);
 
+        // 返回K矩阵
         cv::Mat toK();
         cv::Matx33f toK_();
 
+        // 极线约束
         bool epipolarConstrain(GeometricCamera* pCamera2, const cv::KeyPoint& kp1, const cv::KeyPoint& kp2, const cv::Mat& R12, const cv::Mat& t12, const float sigmaLevel, const float unc);
         bool epipolarConstrain_(GeometricCamera* pCamera2, const cv::KeyPoint& kp1, const cv::KeyPoint& kp2, const cv::Matx33f& R12, const cv::Matx31f& t12, const float sigmaLevel, const float unc);
 

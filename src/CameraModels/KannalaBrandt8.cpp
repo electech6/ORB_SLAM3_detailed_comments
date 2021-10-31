@@ -141,8 +141,18 @@ cv::Matx31f KannalaBrandt8::unprojectMat_(const cv::Point2f &p2D)
 
 /** 
  * @brief 反投影
+ * 投影过程
+ * xc​ = Xc/Zc, yc = Yc/Zc
+ * r^2 = xc^2 + yc^2
+ * θ = arctan(r)
+ * θd = k0*θ + k1*θ^3 + k2*θ^5 + k3*θ^7 + k4*θ^9
+ * xd = θd/r * xc   yd = θd/r * yc
+ * u = fx*xd + cx  v = fy*yd + cy
+ * 
+ * 
  * 已知u与v 未矫正的特征点像素坐标
  * xd = (u - cx) / fx    yd = (v - cy) / fy
+ * 待求的 xc = xd * r / θd  yc = yd * r / θd
  * 待求的 xc = xd * tan(θ) / θd  yc = yd * tan(θ) / θd
  * 其中 θd的算法如下：
  *     xd^2 + yd^2 = θd^2/r^2 * (xc^2 + yc^2)
@@ -172,17 +182,22 @@ cv::Point3f KannalaBrandt8::unproject(const cv::Point2f &p2D)
     if (theta_d > 1e-8)
     {
         //Compensate distortion iteratively
-        float theta = theta_d;
+        float theta = theta_d;  // θ的初始值定为了θd
         // 开始迭代
         for (int j = 0; j < 10; j++)
         {
-            float theta2 = theta * theta, theta4 = theta2 * theta2, theta6 = theta4 * theta2, theta8 = theta4 * theta4;
-            float k0_theta2 = mvParameters[4] * theta2, k1_theta4 = mvParameters[5] * theta4;
-            float k2_theta6 = mvParameters[6] * theta6, k3_theta8 = mvParameters[7] * theta8;
+            float theta2 = theta * theta, 
+                  theta4 = theta2 * theta2,
+                  theta6 = theta4 * theta2,
+                  theta8 = theta4 * theta4;
+            float k0_theta2 = mvParameters[4] * theta2,
+                  k1_theta4 = mvParameters[5] * theta4;
+            float k2_theta6 = mvParameters[6] * theta6,
+                  k3_theta8 = mvParameters[7] * theta8;
             float theta_fix = (theta * (1 + k0_theta2 + k1_theta4 + k2_theta6 + k3_theta8) - theta_d) /
                                 (1 + 3 * k0_theta2 + 5 * k1_theta4 + 7 * k2_theta6 + 9 * k3_theta8);
             theta = theta - theta_fix;
-            if (fabsf(theta_fix) < precision)
+            if (fabsf(theta_fix) < precision)  // 如果更新量变得很小，表示接近最终值
                 break;
         }
         //scale = theta - theta_d;
@@ -194,7 +209,7 @@ cv::Point3f KannalaBrandt8::unproject(const cv::Point2f &p2D)
 }
 
 /** 
- * @brief 求解三维点关于二维像素坐标的雅克比矩阵
+ * @brief 求解二维像素坐标关于三维点的雅克比矩阵
  * u = fx * θd * x / sqrt(x^2 + y^2) + cx
  * v = fy * θd * y / sqrt(x^2 + y^2) + cy
  * 这两个式子分别对 xyz 求导
@@ -376,23 +391,27 @@ bool KannalaBrandt8::matchAndtriangulate(const cv::KeyPoint &kp1, const cv::KeyP
     cv::Point3f ray1c = this->unproject(kp1.pt);
     cv::Point3f ray2c = pOther->unproject(kp2.pt);
 
+    // 获得点1在帧1的归一化坐标
     cv::Mat r1(3, 1, CV_32F);
     r1.at<float>(0) = ray1c.x;
     r1.at<float>(1) = ray1c.y;
     r1.at<float>(2) = ray1c.z;
 
+    // 获得点2在帧2的归一化坐标
     cv::Mat r2(3, 1, CV_32F);
     r2.at<float>(0) = ray2c.x;
     r2.at<float>(1) = ray2c.y;
     r2.at<float>(2) = ray2c.z;
 
     //Check parallax between rays
+    // 射线在世界坐标系下
     cv::Mat ray1 = Rwc1 * r1;
     cv::Mat ray2 = Rwc2 * r2;
 
     const float cosParallaxRays = ray1.dot(ray2) / (cv::norm(ray1) * cv::norm(ray2));
 
     //If parallax is lower than 0.9998, reject this match
+    // 夹角几乎为0时返回，因为表示这个点过远，三角化会带来大量误差
     if (cosParallaxRays > 0.9998)
     {
         return false;
@@ -409,10 +428,12 @@ bool KannalaBrandt8::matchAndtriangulate(const cv::KeyPoint &kp1, const cv::KeyP
 
     cv::Mat x3D;
 
+    // 三角化
     Triangulate(p11, p22, Tcw1, Tcw2, x3D);
 
     cv::Mat x3Dt = x3D.t();
 
+    //  查看点是否位于相机前面
     //Check triangulation in front of cameras
     float z1 = Rcw1.row(2).dot(x3Dt) + tcw1.at<float>(2);
     if (z1 <= 0)
@@ -426,6 +447,7 @@ bool KannalaBrandt8::matchAndtriangulate(const cv::KeyPoint &kp1, const cv::KeyP
         return false;
     }
 
+    // 查看投影误差
     //Check reprojection error in first keyframe
     //  -Transform point into camera reference system
     cv::Mat x3D1 = Rcw1 * x3D + tcw1;
@@ -480,7 +502,7 @@ float KannalaBrandt8::TriangulateMatches(GeometricCamera *pCamera2, const cv::Ke
     //Check parallax
     // 2. 查看射线夹角
     // 这里有点像极线约束，但并不是，将r2通过R12旋转到与r1同方向的坐标系
-    // 然后计算他们的夹角，看其是否超过1.14° 讲真，这个条件感觉有些苛刻
+    // 然后计算他们的夹角，看其是否超过1.14° 
     cv::Mat r21 = R12 * r2;
 
     const float cosParallaxRays = r1.dot(r21) / (cv::norm(r1) * cv::norm(r21));
