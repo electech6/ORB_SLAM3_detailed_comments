@@ -4304,7 +4304,7 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
  * @param[in] pKF               //关键帧
  * @param[in] pbStopFlag        //是否停止的标志
  * @param[in] pMap              //地图
- * @param[in] num_fixedKF       //
+ * @param[in] num_fixedKF       //固定不优化关键帧的数目
  * @param[in] num_OptKF 
  * @param[in] num_MPs 
  * @param[in] num_edges 
@@ -6027,7 +6027,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame* pMainKF,vector<KeyFrame*> vpAdju
     bool bShowImages = false;
 
     vector<MapPoint*> vpMPs;
-// 1. 构建g2o优化器
+    // 1. 构建g2o优化器
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 

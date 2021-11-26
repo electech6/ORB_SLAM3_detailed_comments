@@ -42,6 +42,7 @@ ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbChec
 {
 }
 
+// 用于Tracking::SearchLocalPoints中匹配更多地图点
 int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoints, const float th, const bool bFarPoints, const float thFarPoints)
 {
     int nmatches=0, left = 0, right = 0;

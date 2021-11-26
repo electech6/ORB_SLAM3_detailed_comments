@@ -141,8 +141,8 @@ protected:
 
     System *mpSystem;
 
-    bool mbMonocular;
-    bool mbInertial;
+    bool mbMonocular;   //mSensor==MONOCULAR || mSensor==IMU_MONOCULAR
+    bool mbInertial;    //mSensor==IMU_MONOCULAR || mSensor==IMU_STEREO
 
     void ResetIfRequested();
     bool mbResetRequested;
@@ -178,10 +178,11 @@ protected:
 
     bool mbAcceptKeyFrames;
     std::mutex mMutexAccept;
-
+    // IMU初始化函数，通过控制不同的参数来表示不同阶段
     void InitializeIMU(float priorG = 1e2, float priorA = 1e6, bool bFirst = false);
+    // 单目惯性模式下优化尺度和重力方向
     void ScaleRefinement();
-
+    //跟踪线程使用，如果为true，暂不添加关键帧
     bool bInitializing;
 
     Eigen::MatrixXd infoInertial;

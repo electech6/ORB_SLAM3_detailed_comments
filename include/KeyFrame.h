@@ -202,9 +202,9 @@ public:
     long unsigned int mnMergeQuery;
     int mnMergeWords;
     float mMergeScore;
-    long unsigned int mnPlaceRecognitionQuery;
+    long unsigned int mnPlaceRecognitionQuery; //标记该关键帧被当前关键帧访问到（也就是有公共单词），防止重复添加
     int mnPlaceRecognitionWords;
-    float mPlaceRecognitionScore;
+    float mPlaceRecognitionScore; //记录该候选帧与当前帧的相似度
 
     bool mbCurrentPlaceRecognition;
 

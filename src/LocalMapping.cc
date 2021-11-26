@@ -174,6 +174,7 @@ void LocalMapping::Run()
                         // 判断成功跟踪匹配的点数是否足够多
                         // 条件---------1.1、跟踪成功的内点数目大于75-----1.2、并且是单目--或--2.1、跟踪成功的内点数目大于100-----2.2、并且不是单目             
                         bool bLarge = ((mpTracker->GetMatchesInliers()>75)&&mbMonocular)||((mpTracker->GetMatchesInliers()>100)&&!mbMonocular);
+                        // 局部地图+IMU一起优化，优化关键帧位姿、地图点、IMU参数
                         Optimizer::LocalInertialBA(mpCurrentKeyFrame, &mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA, bLarge, !mpCurrentKeyFrame->GetMap()->GetIniertialBA2());
                         b_doneLBA = true;
                     }
@@ -182,6 +183,7 @@ void LocalMapping::Run()
 						// Step 6.2 不是IMU模式或者当前关键帧所在的地图还未完成IMU初始化
 						// 局部地图BA，不包括IMU数据
 						// 注意这里的第二个参数是按地址传递的,当这里的 mbAbortBA 状态发生变化时，能够及时执行/停止BA
+                        // 局部地图优化，不包括IMU信息。优化关键帧位姿、地图点
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
                         b_doneLBA = true;
                     }
@@ -233,7 +235,7 @@ void LocalMapping::Run()
                 timeKFCulling_ms = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndKFCulling - time_EndLBA).count();
                 vdKFCullingSync_ms.push_back(timeKFCulling_ms);
 #endif
-				// Step 9 如果距离初始化成功累计时间差小于100s 并且 是IMU模式，进行VIBA
+				// Step 9 如果距离IMU第一阶段初始化成功累计时间差小于100s，进行VIBA
                 if ((mTinit<100.0f) && mbInertial)
                 {
                     // Step 9.1 根据条件判断是否进行VIBA1（IMU第二阶段初始化）
@@ -283,6 +285,7 @@ void LocalMapping::Run()
                                 (mTinit>75.0f && mTinit<75.5f))){
                             cout << "start scale ref" << endl;
                             if (mbMonocular)
+                                // 使用了所有关键帧，但只优化尺度和重力方向
                                 ScaleRefinement();
                             cout << "end scale ref" << endl;
                         }
@@ -1236,12 +1239,12 @@ void LocalMapping::KeyFrameCulling()
     vector<KeyFrame*> vpLocalKeyFrames = mpCurrentKeyFrame->GetVectorCovisibleKeyFrames();
 
     float redundant_th;
-    // 非IMU时
+    // 非IMU模式时
     if(!mbInertial)
         redundant_th = 0.9;
-    else if (mbMonocular)	// imu 且单目时
+    else if (mbMonocular)	// 单目+imu 时
         redundant_th = 0.9;
-    else	// 其他imu时
+    else	// 双目+imu时
         redundant_th = 0.5;
 
     const bool bInitImu = mpAtlas->isImuInitialized();
@@ -1268,7 +1271,7 @@ void LocalMapping::KeyFrameCulling()
     {
         count++;
         KeyFrame* pKF = *vit;
-
+        // 如果是地图里第1个关键帧或者是标记为坏帧，则跳过
         if((pKF->mnId==pKF->GetMap()->GetInitKFid()) || pKF->isBad())
             continue;
         // Step 2：提取每个共视关键帧的地图点
@@ -1291,7 +1294,7 @@ void LocalMapping::KeyFrameCulling()
                 {
                     if(!mbMonocular)
                     {
-                        // 对于双目，仅考虑近处（不超过基线的 35倍 ）的地图点
+                        // 对于双目，仅考虑近处（不超过基线的40倍 ）的地图点
                         if(pKF->mvDepth[i]>pKF->mThDepth || pKF->mvDepth[i]<0)
                             continue;
                     }
@@ -1768,7 +1771,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 }
 
 /**
- * @brief 通过BA优化进行尺度更新，关键帧小于100，在这里的时间段内时多次进行尺度更新
+ * @brief 通过BA优化进行尺度更新，关键帧小于100，使用了所有关键帧的信息，但只优化尺度和重力方向。每10s在这里的时间段内时多次进行尺度更新
  */
 void LocalMapping::ScaleRefinement()
 {
@@ -1799,6 +1802,8 @@ void LocalMapping::ScaleRefinement()
 
     const int N = vpKF.size();
     // 2. 更新旋转与尺度
+
+    // 待优化变量的初值
     mRwg = Eigen::Matrix3d::Identity();
     mScale=1.0;
 

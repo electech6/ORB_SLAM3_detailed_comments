@@ -691,7 +691,7 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
                     // 如果该关键帧不是当前关键帧的共视关键帧
                     if(!spConnectedKF.count(pKFi))
                     {
-                        // 标记改关键帧被当前关键帧访问到
+                        // 标记该关键帧被当前关键帧访问到（也就是有公共单词）
                         pKFi->mnPlaceRecognitionQuery=pKF->mnId;
                         // 把当前关键帧添加到有公共单词的关键帧列表中
                         lKFsSharingWords.push_back(pKFi);
@@ -713,7 +713,7 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
         return;
 
     // Only compare against those keyframes that share enough words
-    // Step 2 统计所有候选帧中与当前关键帧的公共单词数最多的单词数,并筛选
+    // Step 2 统计所有候选帧中与当前关键帧的公共单词数最多的单词数maxCommonWords,并筛选
     int maxCommonWords=0;
     for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++)
     {
@@ -738,7 +738,7 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
         // 如果当前帧的公共单词数大于minCommonWords
         if(pKFi->mnPlaceRecognitionWords>minCommonWords)
         {
-            nscores++;
+            nscores++;  //未使用
             // 计算相似度
             float si = mpVoc->score(pKF->mBowVec,pKFi->mBowVec);
             // 记录该候选帧与当前帧的相似度
@@ -773,12 +773,12 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
         for(vector<KeyFrame*>::iterator vit=vpNeighs.begin(), vend=vpNeighs.end(); vit!=vend; vit++)
         {
             KeyFrame* pKF2 = *vit;
-            // 如果改关键帧没有被当前关键帧访问过(这里标记的是有没有公共单词)则跳过
+            // 如果该关键帧没有被当前关键帧访问过(也就是没有公共单词)则跳过
             if(pKF2->mnPlaceRecognitionQuery!=pKF->mnId)
                 continue;
             // 累加小组总分
             accScore+=pKF2->mPlaceRecognitionScore;
-            // 如果大与组内最高分,则重新记录
+            // 如果大于组内最高分,则更新当前最高分记录
             if(pKF2->mPlaceRecognitionScore>bestScore)
             {
                 pBestKF=pKF2;
@@ -806,7 +806,7 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
     //for(list<pair<float,KeyFrame*> >::iterator it=lAccScoreAndMatch.begin(), itend=lAccScoreAndMatch.end(); it!=itend; it++)
     int i = 0;
     list<pair<float,KeyFrame*> >::iterator it=lAccScoreAndMatch.begin();
-    // 遍历lAccScoreAndMatch中所有的pair, 每个pair为<小组总相似度,组内相似度最高的关键帧指针>
+    // 遍历lAccScoreAndMatch中所有的pair, 每个pair为<小组总相似度,组内相似度最高的关键帧指针>，nNumCandidates默认为3
     while(i < lAccScoreAndMatch.size() && (vpLoopCand.size() < nNumCandidates || vpMergeCand.size() < nNumCandidates))
     {
         //cout << "Accum score: " << it->first << endl;

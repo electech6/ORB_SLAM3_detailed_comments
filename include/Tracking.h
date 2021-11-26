@@ -63,18 +63,20 @@ public:
     ~Tracking();
 
     // Parse the config file
+    // 提取配置文件数据
     bool ParseCamParamFile(cv::FileStorage &fSettings);
     bool ParseORBParamFile(cv::FileStorage &fSettings);
     bool ParseIMUParamFile(cv::FileStorage &fSettings);
 
     // Preprocess the input and call Track(). Extract features and performs stereo matching.
+    // 输入图像输出位姿Tcw
     cv::Mat GrabImageStereo(const cv::Mat &imRectLeft,const cv::Mat &imRectRight, const double &timestamp, string filename);
     cv::Mat GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename);
     cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename);
     // cv::Mat GrabImageImuMonocular(const cv::Mat &im, const double &timestamp);
-
+    // 放置IMU数据
     void GrabImuData(const IMU::Point &imuMeasurement);
-
+    // 设置线程指针
     void SetLocalMapper(LocalMapping* pLocalMapper);
     void SetLoopClosing(LoopClosing* pLoopClosing);
     void SetViewer(Viewer* pViewer);
@@ -82,23 +84,27 @@ public:
 
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
+    // 更换新的标定参数，未使用
     void ChangeCalibration(const string &strSettingPath);
 
     // Use this function if you have deactivated local mapping and you only want to localize the camera.
+    // 设置是否仅定位模式还是SLAM模式
     void InformOnlyTracking(const bool &flag);
-
+    // localmapping中更新了关键帧的位姿后，更新普通帧的位姿，通过IMU积分更新速度。localmapping中初始化imu中使用
     void UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurrentKeyFrame);
     KeyFrame* GetLastKeyFrame()
     {
         return mpLastKeyFrame;
     }
-
+    // 新建地图
     void CreateMapInAtlas();
     std::mutex mMutexTracks;
 
-    //--
+    // 更新数据集
     void NewDataset();
+    // 获得数据集总数
     int GetNumberDataset();
+    // 获取匹配内点总数
     int GetMatchesInliers();
 public:
 
@@ -122,7 +128,7 @@ public:
 
     // Current Frame
     Frame mCurrentFrame;
-    Frame mLastFrame;
+    Frame mLastFrame; //跟踪成功后，保存当前帧数据
 
     cv::Mat mImGray;
 
@@ -135,6 +141,7 @@ public:
 
     // Lists used to recover the full camera trajectory at the end of the execution.
     // Basically we store the reference keyframe for each frame and its relative transformation
+    // 代码结束后保存位姿用的列表
     list<cv::Mat> mlRelativeFramePoses;
     list<KeyFrame*> mlpReferences;
     list<double> mlFrameTimes;
@@ -145,6 +152,7 @@ public:
     bool mbStep;
 
     // True if local mapping is deactivated and we are performing only localization
+    // true表示仅定位模式，此时局部建图线程和闭环线程关闭
     bool mbOnlyTracking;
 
     void Reset(bool bLocMap = false);
@@ -156,7 +164,7 @@ public:
     double t0vis; // time-stamp of first inserted keyframe
     double t0IMU; // time-stamp of IMU initialization
 
-
+    // 获取局部地图点
     vector<MapPoint*> GetLocalMapMPS();
 
     bool mbWriteStats;
@@ -186,40 +194,41 @@ public:
 protected:
 
     // Main tracking function. It is independent of the input sensor.
-    void Track();
+    void Track();   //主要的跟踪函数
 
     // Map initialization for stereo and RGB-D
-    void StereoInitialization();
+    void StereoInitialization();    //双目初始化
 
     // Map initialization for monocular
-    void MonocularInitialization();
-    void CreateNewMapPoints();
+    void MonocularInitialization(); //单目初始化
+    void CreateNewMapPoints();      //创建新的地图点
     cv::Mat ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2);
-    void CreateInitialMapMonocular();
+    void CreateInitialMapMonocular();   //单目模式下创建初始化地图
 
-    void CheckReplacedInLastFrame();
-    bool TrackReferenceKeyFrame();
-    void UpdateLastFrame();
-    bool TrackWithMotionModel();
-    bool PredictStateIMU();
+    void CheckReplacedInLastFrame();//检查上一帧中的地图点是否需要被替换
+    bool TrackReferenceKeyFrame();  // 参考关键帧跟踪
+    void UpdateLastFrame();         //更新上一帧位姿，在上一帧中生成临时地图点
+    bool TrackWithMotionModel();    //恒速模型跟踪
+    bool PredictStateIMU();         //用IMU预测位姿
 
-    bool Relocalization();
+    bool Relocalization();          //重定位
 
-    void UpdateLocalMap();
-    void UpdateLocalPoints();
-    void UpdateLocalKeyFrames();
+    void UpdateLocalMap();          //更新局部地图
+    void UpdateLocalPoints();       //更新局部地图点
+    void UpdateLocalKeyFrames();    //更新局部地图里的关键帧
 
-    bool TrackLocalMap();
-    bool TrackLocalMap_old();
-    void SearchLocalPoints();
+    bool TrackLocalMap();           //局部地图跟踪
+    bool TrackLocalMap_old();       //未定义
+    void SearchLocalPoints();       //搜索局部地图点
 
-    bool NeedNewKeyFrame();
-    void CreateNewKeyFrame();
+    bool NeedNewKeyFrame();         //判断是否需要插入关键帧
+    void CreateNewKeyFrame();       //创建关键帧
 
     // Perform preintegration from last frame
-    void PreintegrateIMU();
+    void PreintegrateIMU();         //IMU预积分
 
     // Reset IMU biases and compute frame velocity
+    // 重置并重新计算IMU偏置。未使用
     void ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz);
     void ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax,  float &bay, float &baz);
 
@@ -230,14 +239,14 @@ protected:
     IMU::Preintegrated *mpImuPreintegratedFromLastKF;
 
     // Queue of IMU measurements between frames
-    std::list<IMU::Point> mlQueueImuData;
+    std::list<IMU::Point> mlQueueImuData;   //存放两帧之间的IMU数据
 
     // Vector of IMU measurements from previous to current frame (to be filled by PreintegrateIMU)
     std::vector<IMU::Point> mvImuFromLastFrame;
     std::mutex mMutexImuQueue;
 
     // Imu calibration parameters
-    IMU::Calib *mpImuCalib;
+    IMU::Calib *mpImuCalib;     //IMU标定参数
 
     // Last Bias Estimation (at keyframe creation)
     IMU::Bias mLastBias;
@@ -249,10 +258,11 @@ protected:
     bool mbVO;
 
     //Other Thread Pointers
+    // 其他线程的指针
     LocalMapping* mpLocalMapper;
     LoopClosing* mpLoopClosing;
 
-    //ORB
+    //ORB特征提取器
     ORBextractor* mpORBextractorLeft, *mpORBextractorRight;
     ORBextractor* mpIniORBextractor;
 
@@ -297,13 +307,13 @@ protected:
     // Threshold close/far points
     // Points seen as close by the stereo/RGBD sensor are considered reliable
     // and inserted from just one frame. Far points requiere a match in two keyframes.
-    float mThDepth;
+    float mThDepth;             //近远点阈值，基线的倍数
 
     // For RGB-D inputs only. For some datasets (e.g. TUM) the depthmap values are scaled.
-    float mDepthMapFactor;
+    float mDepthMapFactor;      // RGB-D尺度缩放因子
 
     //Current matches in frame
-    int mnMatchesInliers;
+    int mnMatchesInliers;       //当前帧匹配内点数
 
     //Last Frame, KeyFrame and Relocalisation Info
     KeyFrame* mpLastKeyFrame;
@@ -321,12 +331,12 @@ protected:
 
 
     //Motion Model
-    cv::Mat mVelocity;
+    cv::Mat mVelocity;      // 恒速模型的速度。通过位姿增量获得或者IMU积分得到
 
     //Color order (true RGB, false BGR, ignored if grayscale)
     bool mbRGB;
 
-    list<MapPoint*> mlpTemporalPoints;
+    list<MapPoint*> mlpTemporalPoints;  // 临时地图点
 
     //int nMapChangeIndex;
 
@@ -340,7 +350,7 @@ protected:
     double mTime_LocalMapTrack;
     double mTime_NewKF_Dec;
 
-    GeometricCamera* mpCamera, *mpCamera2;
+    GeometricCamera* mpCamera, *mpCamera2;  //相机类
 
     int initID, lastID;
 
