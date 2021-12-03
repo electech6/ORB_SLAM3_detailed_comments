@@ -179,7 +179,7 @@ protected:
     int mnLoopNumCoincidences;
     int mnLoopNumNotFound;
     KeyFrame* mpLoopLastCurrentKF;
-    g2o::Sim3 ;
+    g2o::Sim3;
     g2o::Sim3 mg2oLoopScw;
     KeyFrame* mpLoopMatchedKF;
     std::vector<MapPoint*> mvpLoopMPs;
