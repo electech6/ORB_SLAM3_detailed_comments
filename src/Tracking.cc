@@ -4232,6 +4232,8 @@ bool Tracking::Relocalization()
                     0.5,                     // 理论最少内点个数，这里是按照总数的比例计算，所以epsilon是比例，默认是0.4
                     5.991);                  // 卡方检验阈值 //This solver needs at least 6 points
                 vpMLPnPsolvers[i] = pSolver;
+                // !bug 忘记更新nCandidates
+                ++nCandidates;
             }
         }
     }
