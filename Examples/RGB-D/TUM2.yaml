@@ -35,8 +35,8 @@ ThDepth: 40.0
 # Deptmap values factor 
 DepthMapFactor: 5208.0
 
-Camera.width: 640
-Camera.height: 480
+#Camera.width: 640
+#Camera.height: 480
 
 #--------------------------------------------------------------------------------------------
 # ORB Parameters
