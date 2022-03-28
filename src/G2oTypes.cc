@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -22,11 +22,15 @@
 namespace ORB_SLAM3
 {
 
+/** 
+ * @brief 储存关键帧位姿相关的信息，用于优化
+ * @param pKF 关键帧
+ */
 ImuCamPose::ImuCamPose(KeyFrame *pKF):its(0)
 {
     // Load IMU pose
-    twb = Converter::toVector3d(pKF->GetImuPosition());
-    Rwb = Converter::toMatrix3d(pKF->GetImuRotation());
+    twb = pKF->GetImuPosition().cast<double>();
+    Rwb = pKF->GetImuRotation().cast<double>();
 
     // Load camera poses
     int num_cams;
@@ -44,24 +48,24 @@ ImuCamPose::ImuCamPose(KeyFrame *pKF):its(0)
     pCamera.resize(num_cams);
 
     // Left camera
-    tcw[0] = Converter::toVector3d(pKF->GetTranslation());
-    Rcw[0] = Converter::toMatrix3d(pKF->GetRotation());
-    tcb[0] = Converter::toVector3d(pKF->mImuCalib.Tcb.rowRange(0,3).col(3));
-    Rcb[0] = Converter::toMatrix3d(pKF->mImuCalib.Tcb.rowRange(0,3).colRange(0,3));
+    tcw[0] = pKF->GetTranslation().cast<double>();
+    Rcw[0] = pKF->GetRotation().cast<double>();
+    tcb[0] = pKF->mImuCalib.mTcb.translation().cast<double>();
+    Rcb[0] = pKF->mImuCalib.mTcb.rotationMatrix().cast<double>();
     Rbc[0] = Rcb[0].transpose();
-    tbc[0] = Converter::toVector3d(pKF->mImuCalib.Tbc.rowRange(0,3).col(3));
+    tbc[0] = pKF->mImuCalib.mTbc.translation().cast<double>();
     pCamera[0] = pKF->mpCamera;
     bf = pKF->mbf;
 
     if(num_cams>1)
     {
-        Eigen::Matrix4d Trl = Converter::toMatrix4d(pKF->mTrl);
-        Rcw[1] = Trl.block<3,3>(0,0)*Rcw[0];
-        tcw[1] = Trl.block<3,3>(0,0)*tcw[0]+Trl.block<3,1>(0,3);
-        tcb[1] = Trl.block<3,3>(0,0)*tcb[0]+Trl.block<3,1>(0,3);
-        Rcb[1] = Trl.block<3,3>(0,0)*Rcb[0];
+        Eigen::Matrix4d Trl = pKF->GetRelativePoseTrl().matrix().cast<double>();
+        Rcw[1] = Trl.block<3,3>(0,0) * Rcw[0];
+        tcw[1] = Trl.block<3,3>(0,0) * tcw[0] + Trl.block<3,1>(0,3);
+        tcb[1] = Trl.block<3,3>(0,0) * tcb[0] + Trl.block<3,1>(0,3);
+        Rcb[1] = Trl.block<3,3>(0,0) * Rcb[0];
         Rbc[1] = Rcb[1].transpose();
-        tbc[1] = -Rbc[1]*tcb[1];
+        tbc[1] = -Rbc[1] * tcb[1];
         pCamera[1] = pKF->mpCamera2;
     }
 
@@ -70,11 +74,15 @@ ImuCamPose::ImuCamPose(KeyFrame *pKF):its(0)
     DR.setIdentity();
 }
 
+/** 
+ * @brief 储存普通帧位姿相关的信息，用于优化
+ * @param pF 普通帧
+ */
 ImuCamPose::ImuCamPose(Frame *pF):its(0)
 {
     // Load IMU pose
-    twb = Converter::toVector3d(pF->GetImuPosition());
-    Rwb = Converter::toMatrix3d(pF->GetImuRotation());
+    twb = pF->GetImuPosition().cast<double>();
+    Rwb = pF->GetImuRotation().cast<double>();
 
     // Load camera poses
     int num_cams;
@@ -92,24 +100,24 @@ ImuCamPose::ImuCamPose(Frame *pF):its(0)
     pCamera.resize(num_cams);
 
     // Left camera
-    tcw[0] = Converter::toVector3d(pF->mTcw.rowRange(0,3).col(3));
-    Rcw[0] = Converter::toMatrix3d(pF->mTcw.rowRange(0,3).colRange(0,3));
-    tcb[0] = Converter::toVector3d(pF->mImuCalib.Tcb.rowRange(0,3).col(3));
-    Rcb[0] = Converter::toMatrix3d(pF->mImuCalib.Tcb.rowRange(0,3).colRange(0,3));
+    tcw[0] = pF->GetPose().translation().cast<double>();
+    Rcw[0] = pF->GetPose().rotationMatrix().cast<double>();
+    tcb[0] = pF->mImuCalib.mTcb.translation().cast<double>();
+    Rcb[0] = pF->mImuCalib.mTcb.rotationMatrix().cast<double>();
     Rbc[0] = Rcb[0].transpose();
-    tbc[0] = Converter::toVector3d(pF->mImuCalib.Tbc.rowRange(0,3).col(3));
+    tbc[0] = pF->mImuCalib.mTbc.translation().cast<double>();
     pCamera[0] = pF->mpCamera;
     bf = pF->mbf;
 
     if(num_cams>1)
     {
-        Eigen::Matrix4d Trl = Converter::toMatrix4d(pF->mTrl);
-        Rcw[1] = Trl.block<3,3>(0,0)*Rcw[0];
-        tcw[1] = Trl.block<3,3>(0,0)*tcw[0]+Trl.block<3,1>(0,3);
-        tcb[1] = Trl.block<3,3>(0,0)*tcb[0]+Trl.block<3,1>(0,3);
-        Rcb[1] = Trl.block<3,3>(0,0)*Rcb[0];
+        Eigen::Matrix4d Trl = pF->GetRelativePoseTrl().matrix().cast<double>();
+        Rcw[1] = Trl.block<3,3>(0,0) * Rcw[0];
+        tcw[1] = Trl.block<3,3>(0,0) * tcw[0] + Trl.block<3,1>(0,3);
+        tcb[1] = Trl.block<3,3>(0,0) * tcb[0] + Trl.block<3,1>(0,3);
+        Rcb[1] = Trl.block<3,3>(0,0) * Rcb[0];
         Rbc[1] = Rcb[1].transpose();
-        tbc[1] = -Rbc[1]*tcb[1];
+        tbc[1] = -Rbc[1] * tcb[1];
         pCamera[1] = pF->mpCamera2;
     }
 
@@ -118,6 +126,9 @@ ImuCamPose::ImuCamPose(Frame *pF):its(0)
     DR.setIdentity();
 }
 
+/** 
+ * @brief 储存位姿相关的信息，用于优化
+ */
 ImuCamPose::ImuCamPose(Eigen::Matrix3d &_Rwc, Eigen::Vector3d &_twc, KeyFrame* pKF): its(0)
 {
     // This is only for posegrpah, we do not care about multicamera
@@ -129,14 +140,14 @@ ImuCamPose::ImuCamPose(Eigen::Matrix3d &_Rwc, Eigen::Vector3d &_twc, KeyFrame* p
     tbc.resize(1);
     pCamera.resize(1);
 
-    tcb[0] = Converter::toVector3d(pKF->mImuCalib.Tcb.rowRange(0,3).col(3));
-    Rcb[0] = Converter::toMatrix3d(pKF->mImuCalib.Tcb.rowRange(0,3).colRange(0,3));
+    tcb[0] = pKF->mImuCalib.mTcb.translation().cast<double>();
+    Rcb[0] = pKF->mImuCalib.mTcb.rotationMatrix().cast<double>();
     Rbc[0] = Rcb[0].transpose();
-    tbc[0] = Converter::toVector3d(pKF->mImuCalib.Tbc.rowRange(0,3).col(3));
-    twb = _Rwc*tcb[0]+_twc;
-    Rwb = _Rwc*Rcb[0];
+    tbc[0] = pKF->mImuCalib.mTbc.translation().cast<double>();
+    twb = _Rwc * tcb[0] + _twc;
+    Rwb = _Rwc * Rcb[0];
     Rcw[0] = _Rwc.transpose();
-    tcw[0] = -Rcw[0]*_twc;
+    tcw[0] = -Rcw[0] * _twc;
     pCamera[0] = pKF->mpCamera;
     bf = pKF->mbf;
 
@@ -145,8 +156,12 @@ ImuCamPose::ImuCamPose(Eigen::Matrix3d &_Rwc, Eigen::Vector3d &_twc, KeyFrame* p
     DR.setIdentity();
 }
 
-void ImuCamPose::SetParam(const std::vector<Eigen::Matrix3d> &_Rcw, const std::vector<Eigen::Vector3d> &_tcw, const std::vector<Eigen::Matrix3d> &_Rbc,
-              const std::vector<Eigen::Vector3d> &_tbc, const double &_bf)
+/** 
+ * @brief 设置相关数据
+ */
+void ImuCamPose::SetParam(
+    const std::vector<Eigen::Matrix3d> &_Rcw, const std::vector<Eigen::Vector3d> &_tcw,
+    const std::vector<Eigen::Matrix3d> &_Rbc, const std::vector<Eigen::Vector3d> &_tbc, const double &_bf)
 {
     Rbc = _Rbc;
     tbc = _tbc;
@@ -172,7 +187,7 @@ void ImuCamPose::SetParam(const std::vector<Eigen::Matrix3d> &_Rcw, const std::v
  */
 Eigen::Vector2d ImuCamPose::Project(const Eigen::Vector3d &Xw, int cam_idx) const
 {
-    Eigen::Vector3d Xc = Rcw[cam_idx]*Xw+tcw[cam_idx];
+    Eigen::Vector3d Xc = Rcw[cam_idx] * Xw + tcw[cam_idx];
 
     return pCamera[cam_idx]->project(Xc);
 }
@@ -183,7 +198,7 @@ Eigen::Vector2d ImuCamPose::Project(const Eigen::Vector3d &Xw, int cam_idx) cons
  */
 Eigen::Vector3d ImuCamPose::ProjectStereo(const Eigen::Vector3d &Xw, int cam_idx) const
 {
-    Eigen::Vector3d Pc = Rcw[cam_idx]*Xw+tcw[cam_idx];
+    Eigen::Vector3d Pc = Rcw[cam_idx] * Xw + tcw[cam_idx];
     Eigen::Vector3d pc;
     double invZ = 1/Pc(2);
     pc.head(2) = pCamera[cam_idx]->project(Pc);
@@ -191,11 +206,18 @@ Eigen::Vector3d ImuCamPose::ProjectStereo(const Eigen::Vector3d &Xw, int cam_idx
     return pc;
 }
 
+/** 
+ * @brief 判断深度值是否有效
+ */
 bool ImuCamPose::isDepthPositive(const Eigen::Vector3d &Xw, int cam_idx) const
 {
-    return (Rcw[cam_idx].row(2)*Xw+tcw[cam_idx](2))>0.0;
+    return (Rcw[cam_idx].row(2) * Xw + tcw[cam_idx](2)) > 0.0;
 }
 
+/** 
+ * @brief 优化算出更新值，更新到状态中
+ * @param pu 更新值
+ */
 void ImuCamPose::Update(const double *pu)
 {
     Eigen::Vector3d ur, ut;
@@ -203,8 +225,8 @@ void ImuCamPose::Update(const double *pu)
     ut << pu[3], pu[4], pu[5];
 
     // Update body pose
-    twb += Rwb*ut;
-    Rwb = Rwb*ExpSO3(ur);
+    twb += Rwb * ut;
+    Rwb = Rwb * ExpSO3(ur);
 
     // Normalize rotation after 5 updates
     its++;
@@ -216,12 +238,12 @@ void ImuCamPose::Update(const double *pu)
 
     // Update camera poses
     const Eigen::Matrix3d Rbw = Rwb.transpose();
-    const Eigen::Vector3d tbw = -Rbw*twb;
+    const Eigen::Vector3d tbw = -Rbw * twb;
 
     for(int i=0; i<pCamera.size(); i++)
     {
-        Rcw[i] = Rcb[i]*Rbw;
-        tcw[i] = Rcb[i]*tbw+tcb[i];
+        Rcw[i] = Rcb[i] * Rbw;
+        tcw[i] = Rcb[i] * tbw + tcb[i];
     }
 
 }
@@ -235,8 +257,8 @@ void ImuCamPose::UpdateW(const double *pu)
 
 
     const Eigen::Matrix3d dR = ExpSO3(ur);
-    DR = dR*DR;
-    Rwb = DR*Rwb0;
+    DR = dR * DR;
+    Rwb = DR * Rwb0;
     // Update body pose
     twb += ut;
 
@@ -244,25 +266,26 @@ void ImuCamPose::UpdateW(const double *pu)
     its++;
     if(its>=5)
     {
-        DR(0,2)=0.0;
-        DR(1,2)=0.0;
-        DR(2,0)=0.0;
-        DR(2,1)=0.0;
+        DR(0,2) = 0.0;
+        DR(1,2) = 0.0;
+        DR(2,0) = 0.0;
+        DR(2,1) = 0.0;
         NormalizeRotation(DR);
-        its=0;
+        its = 0;
     }
 
     // Update camera pose
     const Eigen::Matrix3d Rbw = Rwb.transpose();
-    const Eigen::Vector3d tbw = -Rbw*twb;
+    const Eigen::Vector3d tbw = -Rbw * twb;
 
     for(int i=0; i<pCamera.size(); i++)
     {
-        Rcw[i] = Rcb[i]*Rbw;
-        tcw[i] = Rcb[i]*tbw+tcb[i];
+        Rcw[i] = Rcb[i] * Rbw;
+        tcw[i] = Rcb[i] * tbw+tcb[i];
     }
 }
 
+// 关于逆深度的，暂未使用
 InvDepthPoint::InvDepthPoint(double _rho, double _u, double _v, KeyFrame* pHostKF): u(_u), v(_v), rho(_rho),
     fx(pHostKF->fx), fy(pHostKF->fy), cx(pHostKF->cx), cy(pHostKF->cy), bf(pHostKF->mbf)
 {
@@ -273,7 +296,9 @@ void InvDepthPoint::Update(const double *pu)
     rho += *pu;
 }
 
-
+/** 
+ * @brief 写入状态量
+ */
 bool VertexPose::read(std::istream& is)
 {
     std::vector<Eigen::Matrix<double,3,3> > Rcw;
@@ -315,6 +340,9 @@ bool VertexPose::read(std::istream& is)
     return true;
 }
 
+/** 
+ * @brief 读出状态量
+ */
 bool VertexPose::write(std::ostream& os) const
 {
     std::vector<Eigen::Matrix<double,3,3> > Rcw = _estimate.Rcw;
@@ -353,7 +381,11 @@ bool VertexPose::write(std::ostream& os) const
     return os.good();
 }
 
-
+/** 
+ * @brief 单目视觉边计算雅克比
+ * _jacobianOplusXi对应着_vertices[0] 也就是误差对于三维点的雅克比
+ * _jacobianOplusXj就对应着位姿
+ */
 void EdgeMono::linearizeOplus()
 {
     const VertexPose* VPose = static_cast<const VertexPose*>(_vertices[1]);
@@ -373,13 +405,17 @@ void EdgeMono::linearizeOplus()
     double y = Xb(1);
     double z = Xb(2);
 
-    SE3deriv << 0.0, z,   -y, 1.0, 0.0, 0.0,
-            -z , 0.0, x, 0.0, 1.0, 0.0,
-            y ,  -x , 0.0, 0.0, 0.0, 1.0;
+    SE3deriv <<  0.0,   z,  -y, 1.0, 0.0, 0.0,
+                 -z , 0.0,   x, 0.0, 1.0, 0.0,
+                  y ,  -x, 0.0, 0.0, 0.0, 1.0;
 
     _jacobianOplusXj = proj_jac * Rcb * SE3deriv; // TODO optimize this product
 }
 
+/** 
+ * @brief 单目视觉纯位姿边计算雅克比
+ * _jacobianOplusXi对应着_vertices[0] 也就是误差对于位姿的雅克比
+ */
 void EdgeMonoOnlyPose::linearizeOplus()
 {
     const VertexPose* VPose = static_cast<const VertexPose*>(_vertices[0]);
@@ -396,12 +432,17 @@ void EdgeMonoOnlyPose::linearizeOplus()
     double x = Xb(0);
     double y = Xb(1);
     double z = Xb(2);
-    SE3deriv << 0.0, z,   -y, 1.0, 0.0, 0.0,
-            -z , 0.0, x, 0.0, 1.0, 0.0,
-            y ,  -x , 0.0, 0.0, 0.0, 1.0;
+    SE3deriv << 0.0,   z,   -y, 1.0, 0.0, 0.0,
+                -z , 0.0,    x, 0.0, 1.0, 0.0,
+                 y , - x,  0.0, 0.0, 0.0, 1.0;
     _jacobianOplusXi = proj_jac * Rcb * SE3deriv; // symbol different becasue of update mode
 }
 
+/** 
+ * @brief 双目视觉边计算雅克比，多了一维误差
+ * _jacobianOplusXi对应着_vertices[0] 也就是误差对于三维点的雅克比
+ * _jacobianOplusXj就对应着位姿
+ */
 void EdgeStereo::linearizeOplus()
 {
     const VertexPose* VPose = static_cast<const VertexPose*>(_vertices[1]);
@@ -434,6 +475,10 @@ void EdgeStereo::linearizeOplus()
     _jacobianOplusXj = proj_jac * Rcb * SE3deriv;
 }
 
+/** 
+ * @brief 双目视觉纯位姿边计算雅克比，多了一维误差
+ * _jacobianOplusXi对应着_vertices[0] 也就是误差对于位姿的雅克比
+ */
 void EdgeStereoOnlyPose::linearizeOplus()
 {
     const VertexPose* VPose = static_cast<const VertexPose*>(_vertices[0]);
@@ -463,17 +508,17 @@ void EdgeStereoOnlyPose::linearizeOplus()
 
 VertexVelocity::VertexVelocity(KeyFrame* pKF)
 {
-    setEstimate(Converter::toVector3d(pKF->GetVelocity()));
+    setEstimate(pKF->GetVelocity().cast<double>());
 }
 
 VertexVelocity::VertexVelocity(Frame* pF)
 {
-    setEstimate(Converter::toVector3d(pF->mVw));
+    setEstimate(pF->GetVelocity().cast<double>());
 }
 
 VertexGyroBias::VertexGyroBias(KeyFrame *pKF)
 {
-    setEstimate(Converter::toVector3d(pKF->GetGyroBias()));
+    setEstimate(pKF->GetGyroBias().cast<double>());
 }
 
 VertexGyroBias::VertexGyroBias(Frame *pF)
@@ -485,7 +530,7 @@ VertexGyroBias::VertexGyroBias(Frame *pF)
 
 VertexAccBias::VertexAccBias(KeyFrame *pKF)
 {
-    setEstimate(Converter::toVector3d(pKF->GetAccBias()));
+    setEstimate(pKF->GetAccBias().cast<double>());
 }
 
 VertexAccBias::VertexAccBias(Frame *pF)
@@ -495,13 +540,14 @@ VertexAccBias::VertexAccBias(Frame *pF)
     setEstimate(ba);
 }
 
+
 /** 
  * @brief 局部地图中imu的局部地图优化（此时已经初始化完毕不需要再优化重力方向与尺度）
  * @param pInt 预积分相关内容
  */
-EdgeInertial::EdgeInertial(IMU::Preintegrated *pInt):JRg(Converter::toMatrix3d(pInt->JRg)),
-    JVg(Converter::toMatrix3d(pInt->JVg)), JPg(Converter::toMatrix3d(pInt->JPg)), JVa(Converter::toMatrix3d(pInt->JVa)),
-    JPa(Converter::toMatrix3d(pInt->JPa)), mpInt(pInt), dt(pInt->dT)
+EdgeInertial::EdgeInertial(IMU::Preintegrated *pInt):JRg(pInt->JRg.cast<double>()),
+    JVg(pInt->JVg.cast<double>()), JPg(pInt->JPg.cast<double>()), JVa(pInt->JVa.cast<double>()),
+    JPa(pInt->JPa.cast<double>()), mpInt(pInt), dt(pInt->dT)
 {
     // 准备工作，把预积分类里面的值先取出来，包含信息的是两帧之间n多个imu信息预积分来的
     // This edge links 6 vertices
@@ -509,32 +555,29 @@ EdgeInertial::EdgeInertial(IMU::Preintegrated *pInt):JRg(Converter::toMatrix3d(p
     resize(6);
     // 1. 定义重力
     g << 0, 0, -IMU::GRAVITY_VALUE;
+
     // 2. 读取协方差矩阵的前9*9部分的逆矩阵，该部分表示的是预积分测量噪声的协方差矩阵
-    cv::Mat cvInfo = pInt->C.rowRange(0, 9).colRange(0, 9).inv(cv::DECOMP_SVD);
-    // 转成eigen Matrix9d
-    Matrix9d Info;
-    for (int r = 0; r < 9; r++)
-        for (int c = 0; c < 9; c++)
-            Info(r, c) = cvInfo.at<float>(r, c);
+    Matrix9d Info = pInt->C.block<9,9>(0,0).cast<double>().inverse();
     // 3. 强制让其成为对角矩阵
-    Info = (Info + Info.transpose()) / 2;
+    Info = (Info+Info.transpose())/2;
     // 4. 让特征值很小的时候置为0，再重新计算信息矩阵（暂不知这么操作的目的是什么，先搞清楚操作流程吧）
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 9, 9>> es(Info);
-    Eigen::Matrix<double, 9, 1> eigs = es.eigenvalues(); // 矩阵特征值
-    for (int i = 0; i < 9; i++)
-        if (eigs[i] < 1e-12)
-            eigs[i] = 0;
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double,9,9> > es(Info);
+    Eigen::Matrix<double,9,1> eigs = es.eigenvalues();
+    for(int i=0;i<9;i++)
+        if(eigs[i]<1e-12)
+            eigs[i]=0;
     // asDiagonal 生成对角矩阵
-    Info = es.eigenvectors() * eigs.asDiagonal() * es.eigenvectors().transpose();
+    Info = es.eigenvectors()*eigs.asDiagonal()*es.eigenvectors().transpose();
     setInformation(Info);
 }
+
+
 
 /** 
  * @brief 计算误差
  */
 void EdgeInertial::computeError()
 {
-    // 计算残差
     // TODO Maybe Reintegrate inertial measurments when difference between linearization point and current estimate is too big
     const VertexPose* VP1 = static_cast<const VertexPose*>(_vertices[0]);
     const VertexVelocity* VV1= static_cast<const VertexVelocity*>(_vertices[1]);
@@ -543,9 +586,9 @@ void EdgeInertial::computeError()
     const VertexPose* VP2 = static_cast<const VertexPose*>(_vertices[4]);
     const VertexVelocity* VV2 = static_cast<const VertexVelocity*>(_vertices[5]);
     const IMU::Bias b1(VA1->estimate()[0],VA1->estimate()[1],VA1->estimate()[2],VG1->estimate()[0],VG1->estimate()[1],VG1->estimate()[2]);
-    const Eigen::Matrix3d dR = Converter::toMatrix3d(mpInt->GetDeltaRotation(b1));
-    const Eigen::Vector3d dV = Converter::toVector3d(mpInt->GetDeltaVelocity(b1));
-    const Eigen::Vector3d dP = Converter::toVector3d(mpInt->GetDeltaPosition(b1));
+    const Eigen::Matrix3d dR = mpInt->GetDeltaRotation(b1).cast<double>();
+    const Eigen::Vector3d dV = mpInt->GetDeltaVelocity(b1).cast<double>();
+    const Eigen::Vector3d dP = mpInt->GetDeltaPosition(b1).cast<double>();
 
     const Eigen::Vector3d er = LogSO3(dR.transpose()*VP1->estimate().Rwb.transpose()*VP2->estimate().Rwb);
     const Eigen::Vector3d ev = VP1->estimate().Rwb.transpose()*(VV2->estimate() - VV1->estimate() - g*dt) - dV;
@@ -569,26 +612,26 @@ void EdgeInertial::linearizeOplus()
     Eigen::Vector3d dbg;
     dbg << db.bwx, db.bwy, db.bwz;
 
-    const Eigen::Matrix3d Rwb1 = VP1->estimate().Rwb; // Ri
-    const Eigen::Matrix3d Rbw1 = Rwb1.transpose();    // Ri.t()
-    const Eigen::Matrix3d Rwb2 = VP2->estimate().Rwb; // Rj
+    const Eigen::Matrix3d Rwb1 = VP1->estimate().Rwb;  // Ri
+    const Eigen::Matrix3d Rbw1 = Rwb1.transpose();     // Ri.t()
+    const Eigen::Matrix3d Rwb2 = VP2->estimate().Rwb;  // Rj
 
-    const Eigen::Matrix3d dR = Converter::toMatrix3d(mpInt->GetDeltaRotation(b1));
-    const Eigen::Matrix3d eR = dR.transpose() * Rbw1 * Rwb2;   // r△Rij
-    const Eigen::Vector3d er = LogSO3(eR);                     // r△φij
-    const Eigen::Matrix3d invJr = InverseRightJacobianSO3(er); // Jr^-1(log(△Rij))
+    const Eigen::Matrix3d dR = mpInt->GetDeltaRotation(b1).cast<double>();
+    const Eigen::Matrix3d eR = dR.transpose()*Rbw1*Rwb2;        // r△Rij
+    const Eigen::Vector3d er = LogSO3(eR);                      // r△φij
+    const Eigen::Matrix3d invJr = InverseRightJacobianSO3(er);  // Jr^-1(log(△Rij))
 
     // 就很神奇，_jacobianOplus个数等于边的个数，里面的大小等于观测值维度（也就是残差）× 每个节点待优化值的维度
     // Jacobians wrt Pose 1
     // _jacobianOplus[0] 9*6矩阵 总体来说就是三个残差分别对pose1的旋转与平移（p）求导
     _jacobianOplus[0].setZero();
-     // rotation
+    // rotation
     // (0,0)起点的3*3块表示旋转残差对pose1的旋转求导
     _jacobianOplus[0].block<3,3>(0,0) = -invJr*Rwb2.transpose()*Rwb1; // OK
     // (3,0)起点的3*3块表示速度残差对pose1的旋转求导
-    _jacobianOplus[0].block<3,3>(3,0) = Skew(Rbw1*(VV2->estimate() - VV1->estimate() - g*dt)); // OK
+    _jacobianOplus[0].block<3,3>(3,0) = Sophus::SO3d::hat(Rbw1*(VV2->estimate() - VV1->estimate() - g*dt)); // OK
     // (6,0)起点的3*3块表示位置残差对pose1的旋转求导
-    _jacobianOplus[0].block<3,3>(6,0) = Skew(Rbw1*(VP2->estimate().twb - VP1->estimate().twb
+    _jacobianOplus[0].block<3,3>(6,0) = Sophus::SO3d::hat(Rbw1*(VP2->estimate().twb - VP1->estimate().twb
                                                    - VV1->estimate()*dt - 0.5*g*dt*dt)); // OK
     // translation
     // (6,3)起点的3*3块表示位置残差对pose1的位置求导
@@ -628,9 +671,9 @@ void EdgeInertial::linearizeOplus()
 }
 
 // localmapping中imu初始化所用的边，除了正常的几个优化变量外还优化了重力方向与尺度
-EdgeInertialGS::EdgeInertialGS(IMU::Preintegrated *pInt):JRg(Converter::toMatrix3d(pInt->JRg)),
-    JVg(Converter::toMatrix3d(pInt->JVg)), JPg(Converter::toMatrix3d(pInt->JPg)), JVa(Converter::toMatrix3d(pInt->JVa)),
-    JPa(Converter::toMatrix3d(pInt->JPa)), mpInt(pInt), dt(pInt->dT)
+EdgeInertialGS::EdgeInertialGS(IMU::Preintegrated *pInt):JRg(pInt->JRg.cast<double>()),
+    JVg(pInt->JVg.cast<double>()), JPg(pInt->JPg.cast<double>()), JVa(pInt->JVa.cast<double>()),
+    JPa(pInt->JPa.cast<double>()), mpInt(pInt), dt(pInt->dT)
 {
     // 准备工作，把预积分类里面的值先取出来，包含信息的是两帧之间n多个imu信息预积分来的
     // This edge links 8 vertices
@@ -638,28 +681,24 @@ EdgeInertialGS::EdgeInertialGS(IMU::Preintegrated *pInt):JRg(Converter::toMatrix
     resize(8);
     // 1. 定义重力
     gI << 0, 0, -IMU::GRAVITY_VALUE;
+
     // 2. 读取协方差矩阵的前9*9部分的逆矩阵，该部分表示的是预积分测量噪声的协方差矩阵
-    cv::Mat cvInfo = pInt->C.rowRange(0, 9).colRange(0, 9).inv(cv::DECOMP_SVD);
-    // 转成eigen Matrix9d
-    Matrix9d Info;
-    for(int r=0;r<9;r++)
-        for(int c=0;c<9;c++)
-            Info(r,c)=cvInfo.at<float>(r,c);
+    Matrix9d Info = pInt->C.block<9,9>(0,0).cast<double>().inverse();
     // 3. 强制让其成为对角矩阵
     Info = (Info+Info.transpose())/2;
-    // 4. 让特征值很小的时候置为0，再重新计算信息矩阵（暂不知这么操作的目的是什么，先搞清楚操作流程吧）
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double,9,9> > es(Info);
-    Eigen::Matrix<double, 9, 1> eigs = es.eigenvalues(); // 矩阵特征值
-     for(int i=0;i<9;i++)
-         if(eigs[i]<1e-12)
-             eigs[i]=0;
+    // 4. 让特征值很小的时候置为0，再重新计算信息矩阵（暂不知这么操作的目的是什么，先搞清楚操作流程吧）
+    Eigen::Matrix<double,9,1> eigs = es.eigenvalues();
+    for(int i=0;i<9;i++)
+        if(eigs[i]<1e-12)
+            eigs[i]=0;
     // asDiagonal 生成对角矩阵
     Info = es.eigenvectors()*eigs.asDiagonal()*es.eigenvectors().transpose();
     setInformation(Info);
 }
 
-// 计算误差
 
+// 计算误差
 void EdgeInertialGS::computeError()
 {
     // TODO Maybe Reintegrate inertial measurments when difference between linearization point and current estimate is too big
@@ -674,9 +713,9 @@ void EdgeInertialGS::computeError()
     const IMU::Bias b(VA->estimate()[0],VA->estimate()[1],VA->estimate()[2],VG->estimate()[0],VG->estimate()[1],VG->estimate()[2]);
     g = VGDir->estimate().Rwg*gI;
     const double s = VS->estimate();
-    const Eigen::Matrix3d dR = Converter::toMatrix3d(mpInt->GetDeltaRotation(b));
-    const Eigen::Vector3d dV = Converter::toVector3d(mpInt->GetDeltaVelocity(b));
-    const Eigen::Vector3d dP = Converter::toVector3d(mpInt->GetDeltaPosition(b));
+    const Eigen::Matrix3d dR = mpInt->GetDeltaRotation(b).cast<double>();
+    const Eigen::Vector3d dV = mpInt->GetDeltaVelocity(b).cast<double>();
+    const Eigen::Vector3d dP = mpInt->GetDeltaPosition(b).cast<double>();
 
     // 计算残差。广义上讲都是真实值 = 残差 + imu，旋转为imu*残差=真实值
     // dR.transpose() 为imu预积分的值，VP1->estimate().Rwb.transpose() * VP2->estimate().Rwb 为相机的Rwc在乘上相机与imu的标定外参矩阵
@@ -706,36 +745,35 @@ void EdgeInertialGS::linearizeOplus()
     Eigen::Vector3d dbg;
     dbg << db.bwx, db.bwy, db.bwz;
 
-    const Eigen::Matrix3d Rwb1 = VP1->estimate().Rwb;  // Ri
-    const Eigen::Matrix3d Rbw1 = Rwb1.transpose();     // Ri.t()
-    const Eigen::Matrix3d Rwb2 = VP2->estimate().Rwb;  // Rj
-    const Eigen::Matrix3d Rwg = VGDir->estimate().Rwg; // Rwg
-    Eigen::MatrixXd Gm = Eigen::MatrixXd::Zero(3, 2);
-    Gm(0, 1) = -IMU::GRAVITY_VALUE;
-    Gm(1, 0) = IMU::GRAVITY_VALUE;
+    const Eigen::Matrix3d Rwb1 = VP1->estimate().Rwb;   // Ri
+    const Eigen::Matrix3d Rbw1 = Rwb1.transpose();      // Ri.t()
+    const Eigen::Matrix3d Rwb2 = VP2->estimate().Rwb;   // Rj
+    const Eigen::Matrix3d Rwg = VGDir->estimate().Rwg;  // Rwg
+    Eigen::MatrixXd Gm = Eigen::MatrixXd::Zero(3,2);
+    Gm(0,1) = -IMU::GRAVITY_VALUE;
+    Gm(1,0) = IMU::GRAVITY_VALUE;
     const double s = VS->estimate();
     const Eigen::MatrixXd dGdTheta = Rwg*Gm;
-    // 预积分得来的dR
-    const Eigen::Matrix3d dR = Converter::toMatrix3d(mpInt->GetDeltaRotation(b));
-    const Eigen::Matrix3d eR = dR.transpose() * Rbw1 * Rwb2;   // r△Rij
-    const Eigen::Vector3d er = LogSO3(eR);                     // r△φij
-    const Eigen::Matrix3d invJr = InverseRightJacobianSO3(er); // Jr^-1(log(△Rij))
+    const Eigen::Matrix3d dR = mpInt->GetDeltaRotation(b).cast<double>();
+    const Eigen::Matrix3d eR = dR.transpose()*Rbw1*Rwb2;        // r△Rij
+    const Eigen::Vector3d er = LogSO3(eR);                      // r△φij
+    const Eigen::Matrix3d invJr = InverseRightJacobianSO3(er);  // Jr^-1(log(△Rij))
 
     // 就很神奇，_jacobianOplus个数等于边的个数，里面的大小等于观测值维度（也就是残差）× 每个节点待优化值的维度
     // Jacobians wrt Pose 1
     // _jacobianOplus[0] 9*6矩阵 总体来说就是三个残差分别对pose1的旋转与平移（p）求导
     _jacobianOplus[0].setZero();
-     // rotation
+    // rotation
     // (0,0)起点的3*3块表示旋转残差对pose1的旋转求导
     _jacobianOplus[0].block<3,3>(0,0) = -invJr*Rwb2.transpose()*Rwb1;
     // (3,0)起点的3*3块表示速度残差对pose1的旋转求导
-    _jacobianOplus[0].block<3,3>(3,0) = Skew(Rbw1*(s*(VV2->estimate() - VV1->estimate()) - g*dt));
+    _jacobianOplus[0].block<3,3>(3,0) = Sophus::SO3d::hat(Rbw1*(s*(VV2->estimate() - VV1->estimate()) - g*dt));
     // (6,0)起点的3*3块表示位置残差对pose1的旋转求导
-    _jacobianOplus[0].block<3,3>(6,0) = Skew(Rbw1*(s*(VP2->estimate().twb - VP1->estimate().twb
+    _jacobianOplus[0].block<3,3>(6,0) = Sophus::SO3d::hat(Rbw1*(s*(VP2->estimate().twb - VP1->estimate().twb
                                                    - VV1->estimate()*dt) - 0.5*g*dt*dt));
     // translation
     // (6,3)起点的3*3块表示位置残差对pose1的位置求导
-    _jacobianOplus[0].block<3,3>(6,3) = -s*Eigen::Matrix3d::Identity();
+    _jacobianOplus[0].block<3,3>(6,3) = Eigen::DiagonalMatrix<double,3>(-s,-s,-s);
 
     // Jacobians wrt Velocity 1
     // _jacobianOplus[1] 9*3矩阵 总体来说就是三个残差分别对pose1的速度求导
@@ -782,6 +820,9 @@ void EdgeInertialGS::linearizeOplus()
     _jacobianOplus[7].block<3,1>(6,0) = Rbw1*(VP2->estimate().twb-VP1->estimate().twb-VV1->estimate()*dt);
 }
 
+/** 
+ * @brief 滑窗边缘化时用的先验边
+ */
 EdgePriorPoseImu::EdgePriorPoseImu(ConstraintPoseImu *c)
 {
     resize(4);
@@ -793,6 +834,9 @@ EdgePriorPoseImu::EdgePriorPoseImu(ConstraintPoseImu *c)
     setInformation(c->H);
 }
 
+/** 
+ * @brief 先验边计算误差
+ */
 void EdgePriorPoseImu::computeError()
 {
     const VertexPose* VP = static_cast<const VertexPose*>(_vertices[0]);
@@ -809,6 +853,9 @@ void EdgePriorPoseImu::computeError()
     _error << er, et, ev, ebg, eba;
 }
 
+/** 
+ * @brief 先验边计算雅克比
+ */
 void EdgePriorPoseImu::linearizeOplus()
 {
     const VertexPose* VP = static_cast<const VertexPose*>(_vertices[0]);
@@ -817,9 +864,9 @@ void EdgePriorPoseImu::linearizeOplus()
     // 源码可读性太差了。。。里面会自动分配矩阵大小，计算改变量时按照对应位置来
     _jacobianOplus[0].setZero();
     // LOG(Rbw*R*EXP(φ)) = LOG(EXP(LOG(Rbw*R) + Jr(-1)*φ)) = LOG(Rbw*R) + Jr(-1)*φ
-    _jacobianOplus[0].block<3, 3>(0, 0) = InverseRightJacobianSO3(er); // Jr(-1)
+    _jacobianOplus[0].block<3,3>(0,0) = InverseRightJacobianSO3(er);   // Jr(-1)
     // Rbw*(t + R*δt - twb) = Rbw*(t - twb) + Rbw*R*δt
-    _jacobianOplus[0].block<3, 3>(3, 3) = Rwb.transpose() * VP->estimate().Rwb; // Rbw*R
+    _jacobianOplus[0].block<3,3>(3,3) = Rwb.transpose()*VP->estimate().Rwb;  // Rbw*R
     _jacobianOplus[1].setZero();
     _jacobianOplus[1].block<3,3>(6,0) = Eigen::Matrix3d::Identity();
     _jacobianOplus[2].setZero();
@@ -857,12 +904,12 @@ Eigen::Matrix3d ExpSO3(const double x, const double y, const double z)
     if(d<1e-5)
     {
         Eigen::Matrix3d res = Eigen::Matrix3d::Identity() + W +0.5*W*W;
-        return Converter::toMatrix3d(IMU::NormalizeRotation(Converter::toCvMat(res)));
+        return NormalizeRotation(res);
     }
     else
     {
         Eigen::Matrix3d res =Eigen::Matrix3d::Identity() + W*sin(d)/d + W*W*(1.0-cos(d))/d2;
-        return Converter::toMatrix3d(IMU::NormalizeRotation(Converter::toCvMat(res)));
+        return NormalizeRotation(res);
     }
 }
 
@@ -922,7 +969,6 @@ Eigen::Matrix3d RightJacobianSO3(const double x, const double y, const double z)
     }
 }
 
-// 反对称矩阵
 Eigen::Matrix3d Skew(const Eigen::Vector3d &w)
 {
     Eigen::Matrix3d W;
@@ -930,14 +976,4 @@ Eigen::Matrix3d Skew(const Eigen::Vector3d &w)
     return W;
 }
 
-// BUG 应该改成svd.matrixV().transpose()
-Eigen::Matrix3d NormalizeRotation(const Eigen::Matrix3d &R)
-{
-    // 这里关注一下
-    // 1. 对于行列数一样的矩阵，Eigen::ComputeThinU | Eigen::ComputeThinV    与    Eigen::ComputeFullU | Eigen::ComputeFullV 一样
-    // 2. 对于行列数不同的矩阵，例如3*4 或者 4*3 矩阵只有3个奇异向量，计算的时候如果是Thin 那么得出的UV矩阵列数只能是3，如果是full那么就是4
-    // 3. thin会损失一部分数据，但是会加快计算，对于大型矩阵解算方程时，可以用thin加速得到结果
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd(R,Eigen::ComputeFullU | Eigen::ComputeFullV);
-    return svd.matrixU()*svd.matrixV().transpose();
-}
 }

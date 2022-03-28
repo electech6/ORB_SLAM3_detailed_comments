@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -673,6 +673,29 @@ void ExtractorNode::DivideNode(ExtractorNode &n1,
         n4.bNoMore = true;
 }
 
+static bool compareNodes(pair<int,ExtractorNode*>& e1, pair<int,ExtractorNode*>& e2)
+{
+    if(e1.first < e2.first)
+    {
+        return true;
+    }
+    else if(e1.first > e2.first)
+    {
+        return false;
+    }
+    else
+    {
+        if(e1.second->UL.x < e2.second->UL.x)
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+}
+
 /**
  * @brief 使用四叉树法对一个图像金字塔图层中的特征点进行平均和分发
  * 
@@ -924,7 +947,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                 // 对需要划分的节点进行排序，对pair对的第一个元素进行排序，默认是从小到大排序
 				// 优先分裂特征点多的节点，使得特征点密集的区域保留更少的特征点
                 //! 注意这里的排序规则非常重要！会导致每次最后产生的特征点都不一样。建议使用 stable_sort
-                sort(vPrevSizeAndPointerToNode.begin(),vPrevSizeAndPointerToNode.end());
+                sort(vPrevSizeAndPointerToNode.begin(),vPrevSizeAndPointerToNode.end(),compareNodes);
 
 				//遍历这个存储了pair对的vector，注意是从后往前遍历
                 for(int j=vPrevSizeAndPointerToNode.size()-1;j>=0;j--)
