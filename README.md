@@ -1,3 +1,14 @@
+# ORB-SLAM3 超详细注释
+
+-by 计算机视觉life 公众号旗下开源学习小组：SLAM研习社
+
+![DEMO](https://github.com/electech6/ORB_SLAM3_detailed_comments/blob/master/demo.gif)
+
+![课程大纲](https://github.com/electech6/ORB_SLAM3_detailed_comments/blob/master/outline.png)
+
+[ORB-SLAM3 逐行源码讲解](https://appafc4omci9700.h5.xiaoeknow.com/content_page/eyJ0eXBlIjoiMyIsInJlc291cmNlX3R5cGUiOjI1LCJyZXNvdXJjZV9pZCI6IiIsImFwcF9pZCI6ImFwcGFmYzRvbWNpOTcwMCIsInByb2R1Y3RfaWQiOiJ0ZXJtXzYxMzcxNTEwODY4MzNfQXRXa2YzIiwiZXhwYW5kX2RhdGEiOltdfQ)
+
+----
 # ORB-SLAM3
 
 ### V1.0, December 22th, 2021
