@@ -220,10 +220,14 @@ std::ostream &operator<<(std::ostream &os, const Pinhole &ph)
     os << ph.mvParameters[0] << " " << ph.mvParameters[1] << " " << ph.mvParameters[2] << " " << ph.mvParameters[3];
     return os;
 }
-SkewSymmetricMatrix
-        assert(is.good()); // Make sure the input stream is good
+std::istream & operator>>(std::istream &is, Pinhole &ph)
+{
+    float nextParam;
+    for(size_t i = 0; i < 4; i++){
+        assert(is.good());  //Make sure the input stream is good
         is >> nextParam;
         ph.mvParameters[i] = nextParam;
+
     }
     return is;
 }
