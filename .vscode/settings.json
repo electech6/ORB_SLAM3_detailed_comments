@@ -102,5 +102,6 @@
 		"xstring": "cpp",
 		"xtr1common": "cpp",
 		"xutility": "cpp"
-	}
+	},
+	"ros.distro": "melodic"
 }
