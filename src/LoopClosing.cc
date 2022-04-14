@@ -506,7 +506,8 @@ bool LoopClosing::NewDetectCommonRegions()
     //Merge candidates
     bool bMergeDetectedInKF = false;
     // Step 3.2 融合的时序几何校验: 注意初始化时mnMergeNumCoincidences=0, 所以可以先跳过看后面
-    // 如果成功验证总次数大于0
+    // mnMergeNumCoincidences表示成功校验总次数，初始化为0
+    // 会先经过后面共视几何校验，如果小于3，会进到如下判断开始时序几何校验
     if(mnMergeNumCoincidences > 0)
     {
         // Find from the last KF candidates
@@ -535,7 +536,7 @@ bool LoopClosing::NewDetectCommonRegions()
             mpMergeLastCurrentKF = mpCurrentKF;
             mg2oMergeSlw = gScw;
             mvpMergeMatchedMPs = vpMatchedMPs;
-            // 如果验证数大于等于3则为成功回环
+            // 如果验证数大于等于3则为成功
             mbMergeDetected = mnMergeNumCoincidences >= 3;
         }
         // 如果没找到共同区域(时序验证失败一次)
@@ -1550,8 +1551,8 @@ void LoopClosing::CorrectLoop()
     mpAtlas->InformNewBigChange();
 
     // Add loop edge
-    // Step 8. 添加当前帧与闭环匹配帧之间的边（这个连接关系不优化）
-    // !感觉这两句话应该放在OptimizeEssentialGraph之前，因为OptimizeEssentialGraph的步骤4.2中有优化
+    // Step 7：添加当前帧与闭环匹配帧之间的边（这个连接关系不优化）
+    // 它在下一次的Essential Graph里面使用
     mpLoopMatchedKF->AddLoopEdge(mpCurrentKF);
     mpCurrentKF->AddLoopEdge(mpLoopMatchedKF);
 
@@ -2112,8 +2113,8 @@ void LoopClosing::MergeLocal()
     bool bStop = false;
     // 为Local BA的接口, 把set转为vector
     // Step 7 在缝合(Welding)区域进行local BA 
-    vpLocalCurrentWindowKFs.clear();
-    vpMergeConnectedKFs.clear();
+    vpLocalCurrentWindowKFs.clear();    //当前关键帧的窗口
+    vpMergeConnectedKFs.clear();        //融合关键帧的窗口
     std::copy(spLocalWindowKFs.begin(), spLocalWindowKFs.end(), std::back_inserter(vpLocalCurrentWindowKFs));
     std::copy(spMergeConnectedKFs.begin(), spMergeConnectedKFs.end(), std::back_inserter(vpMergeConnectedKFs));
     if (mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD)

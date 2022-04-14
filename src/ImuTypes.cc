@@ -242,7 +242,7 @@ void Preintegrated::Reintegrate()
  * 
  * @param[in] acceleration  加速度计数据
  * @param[in] angVel        陀螺仪数据
- * @param[in] dt            两帧之间时间差
+ * @param[in] dt            两图像 帧之间时间差
  */
 void Preintegrated::IntegrateNewMeasurement(const Eigen::Vector3f &acceleration, const Eigen::Vector3f &angVel, const float &dt)
 {

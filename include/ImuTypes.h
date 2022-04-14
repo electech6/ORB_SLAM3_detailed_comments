@@ -223,7 +223,7 @@ public:
 
 private:
     // Updated bias
-    Bias bu;
+    Bias bu;    //更新后的零偏
     // Dif between original and updated bias
     // This is used to compute the updated values of the preintegration
     Eigen::Matrix<float,6,1> db;
