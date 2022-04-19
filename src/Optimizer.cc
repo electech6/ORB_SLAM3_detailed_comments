@@ -4551,8 +4551,10 @@ int Optimizer::PoseInertialOptimizationLastKeyFrame(Frame *pFrame, bool bRecInit
                 cv::KeyPoint kpUn;
 
                 // Left monocular observation
+                // 这里说的Left monocular包含两种情况：1.单目情况 2.两个相机情况下的相机1
                 if((!bRight && pFrame->mvuRight[i]<0) || i < Nleft)
                 {
+                    //如果是两个相机情况下的相机1
                     if(i < Nleft) // pair left-right
                         kpUn = pFrame->mvKeys[i];
                     else
@@ -4934,8 +4936,10 @@ int Optimizer::PoseInertialOptimizationLastFrame(Frame *pFrame, bool bRecInit)
             {
                 cv::KeyPoint kpUn;
                 // Left monocular observation
+                // 这里说的Left monocular包含两种情况：1.单目情况 2.两个相机情况下的相机1
                 if((!bRight && pFrame->mvuRight[i]<0) || i < Nleft)
                 {
+                    //如果是两个相机情况下的相机1
                     if(i < Nleft) // pair left-right
                         kpUn = pFrame->mvKeys[i];
                     else

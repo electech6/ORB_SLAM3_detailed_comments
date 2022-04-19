@@ -178,9 +178,9 @@ void LoopClosing::Run()
                             }
                             // If inertial, force only yaw
                             // 如果是imu模式并且完成了初始化,强制将焊接变换的 roll 和 pitch 设为0
-                            // 可以理解成两个坐标轴都经过了imu初始化，肯定都是水平的
-                            if ((mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD) &&
-                                   mpCurrentKF->GetMap()->GetIniertialBA1())
+                            // 通过物理约束来保证两个坐标轴都是水平的
+                            if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
+                                   mpCurrentKF->GetMap()->GetIniertialBA1()) // TODO, maybe with GetIniertialBA1
                             {
                                 Eigen::Vector3d phi = LogSO3(mSold_new.rotation().toRotationMatrix());
                                 phi(0)=0;
@@ -465,6 +465,7 @@ bool LoopClosing::NewDetectCommonRegions()
             mnLoopNumCoincidences++;
             // 不再参与新的回环检测
             mpLoopLastCurrentKF->SetErase();
+            // 将当前关键帧作为上次关键帧
             mpLoopLastCurrentKF = mpCurrentKF;
             mg2oLoopSlw = gScw;  // 记录当前优化的结果为{last T_cw}即为 T_lw
             // 记录匹配到的点
@@ -505,7 +506,8 @@ bool LoopClosing::NewDetectCommonRegions()
     //Merge candidates
     bool bMergeDetectedInKF = false;
     // Step 3.2 融合的时序几何校验: 注意初始化时mnMergeNumCoincidences=0, 所以可以先跳过看后面
-    // 如果成功验证总次数大于0
+    // mnMergeNumCoincidences表示成功校验总次数，初始化为0
+    // 会先经过后面共视几何校验，如果小于3，会进到如下判断开始时序几何校验
     if(mnMergeNumCoincidences > 0)
     {
         // Find from the last KF candidates
@@ -534,7 +536,7 @@ bool LoopClosing::NewDetectCommonRegions()
             mpMergeLastCurrentKF = mpCurrentKF;
             mg2oMergeSlw = gScw;
             mvpMergeMatchedMPs = vpMatchedMPs;
-            // 如果验证数大于等于3则为成功回环
+            // 如果验证数大于等于3则为成功
             mbMergeDetected = mnMergeNumCoincidences >= 3;
         }
         // 如果没找到共同区域(时序验证失败一次)
@@ -690,8 +692,9 @@ bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame*
         // 若匹配的数量大于一定的数目
         if(numOptMatches > nProjOptMatches)
         {
-            //!bug, 以下gScw_estimation应该通过上述sim3优化后的位姿来更新。以下mScw应该改为 gscm * gswm.t
-            g2o::Sim3 gScw_estimation(gScw.rotation(), gScw.translation(),1.0);
+            //!bug, 以下gScw_estimation应该通过上述sim3优化后的位姿来更新。以下mScw应该改为 gscm * gswm^-1
+            g2o::Sim3 gScw_estimation(Converter::toMatrix3d(mScw.rowRange(0, 3).colRange(0, 3)),
+                           Converter::toVector3d(mScw.rowRange(0, 3).col(3)),1.0);
 
             vector<MapPoint*> vpMatchedMP;
             vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
@@ -1548,8 +1551,8 @@ void LoopClosing::CorrectLoop()
     mpAtlas->InformNewBigChange();
 
     // Add loop edge
-    // Step 8. 添加当前帧与闭环匹配帧之间的边（这个连接关系不优化）
-    // !感觉这两句话应该放在OptimizeEssentialGraph之前，因为OptimizeEssentialGraph的步骤4.2中有优化
+    // Step 7：添加当前帧与闭环匹配帧之间的边（这个连接关系不优化）
+    // 它在下一次的Essential Graph里面使用
     mpLoopMatchedKF->AddLoopEdge(mpCurrentKF);
     mpCurrentKF->AddLoopEdge(mpLoopMatchedKF);
 
@@ -2110,8 +2113,8 @@ void LoopClosing::MergeLocal()
     bool bStop = false;
     // 为Local BA的接口, 把set转为vector
     // Step 7 在缝合(Welding)区域进行local BA 
-    vpLocalCurrentWindowKFs.clear();
-    vpMergeConnectedKFs.clear();
+    vpLocalCurrentWindowKFs.clear();    //当前关键帧的窗口
+    vpMergeConnectedKFs.clear();        //融合关键帧的窗口
     std::copy(spLocalWindowKFs.begin(), spLocalWindowKFs.end(), std::back_inserter(vpLocalCurrentWindowKFs));
     std::copy(spMergeConnectedKFs.begin(), spMergeConnectedKFs.end(), std::back_inserter(vpMergeConnectedKFs));
     if (mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD)
@@ -2272,8 +2275,8 @@ void LoopClosing::MergeLocal()
     // Essential graph 优化后可以重新开始局部建图了
     mpLocalMapper->Release();
 
-    // 如果之前停掉了全局的BA,就开启全局BA
-    // 这里没有imu, 所以isImuInitialized一定是false, 所以第二个条件（当前地图关键帧数量小于200且地图只有一个）一定是true 
+    // 全局的BA（永远不会执行）
+    // 这里没有imu, 所以isImuInitialized一定是false, 此时地图融合Atlas至少2个地图，所以第二个条件也一定是false
     // Step 9 全局BA
     if(bRelaunchBA && (!pCurrentMap->isImuInitialized() || (pCurrentMap->KeyFramesInMap()<200 && mpAtlas->CountMaps()==1)))
     {
@@ -2404,7 +2407,7 @@ void LoopClosing::MergeLocal2()
         Optimizer::InertialOptimization(pCurrentMap,bg,ba);
         IMU::Bias b (ba[0],ba[1],ba[2],bg[0],bg[1],bg[2]);
         unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
-        // 用优化得到的 bias 更新地图
+        // 用优化得到的 bias 更新普通帧位姿
         mpTracker->UpdateFrameIMU(1.0f,b,mpTracker->GetLastKeyFrame());
 
         // Set map initialized
@@ -2457,9 +2460,9 @@ void LoopClosing::MergeLocal2()
             pMergeMap->EraseMapPoint(pMPi);
         }
         // ? BUG! pMergeMap没有设置为BAD
-        // ? 感觉应该加入如下代码吧？
-        // ? mpAtlas->SetMapBad(pCurrentMap);
-
+        // ? 应该加入如下代码吧？
+        // ? mpAtlas->SetMapBad(pMergeMap);
+        
         // Save non corrected poses (already merged maps)
         // 存下所有关键帧在融合矫正之前的位姿
         vector<KeyFrame*> vpKFs = pCurrentMap->GetAllKeyFrames();
@@ -2510,7 +2513,7 @@ void LoopClosing::MergeLocal2()
     vector<MapPoint*> vpCheckFuseMapPoint; // MapPoint vector from current map to allow to fuse duplicated points with the old map (merge)
     vector<KeyFrame*> vpCurrentConnectedKFs;
 
-    // 为后续SearchAndFuse及welding BA准备数据
+    // 为后续SearchAndFuse准备数据
     // 拿出融合帧的局部窗口, 确保最后是(1+5), 1: 融合帧自己 2: 5个共视关键帧
     mvpMergeConnectedKFs.push_back(mpMergeMatchedKF);
     vector<KeyFrame*> aux = mpMergeMatchedKF->GetVectorCovisibleKeyFrames();

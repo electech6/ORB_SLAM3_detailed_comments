@@ -579,12 +579,12 @@ EdgeInertial::EdgeInertial(IMU::Preintegrated *pInt):JRg(pInt->JRg.cast<double>(
 void EdgeInertial::computeError()
 {
     // TODO Maybe Reintegrate inertial measurments when difference between linearization point and current estimate is too big
-    const VertexPose* VP1 = static_cast<const VertexPose*>(_vertices[0]);
-    const VertexVelocity* VV1= static_cast<const VertexVelocity*>(_vertices[1]);
-    const VertexGyroBias* VG1= static_cast<const VertexGyroBias*>(_vertices[2]);
-    const VertexAccBias* VA1= static_cast<const VertexAccBias*>(_vertices[3]);
-    const VertexPose* VP2 = static_cast<const VertexPose*>(_vertices[4]);
-    const VertexVelocity* VV2 = static_cast<const VertexVelocity*>(_vertices[5]);
+    const VertexPose* VP1 = static_cast<const VertexPose*>(_vertices[0]);           //位姿Ti
+    const VertexVelocity* VV1= static_cast<const VertexVelocity*>(_vertices[1]);    //速度vi
+    const VertexGyroBias* VG1= static_cast<const VertexGyroBias*>(_vertices[2]);    //零偏Bgi
+    const VertexAccBias* VA1= static_cast<const VertexAccBias*>(_vertices[3]);      //零偏Bai
+    const VertexPose* VP2 = static_cast<const VertexPose*>(_vertices[4]);           //位姿Tj
+    const VertexVelocity* VV2 = static_cast<const VertexVelocity*>(_vertices[5]);   //速度vj
     const IMU::Bias b1(VA1->estimate()[0],VA1->estimate()[1],VA1->estimate()[2],VG1->estimate()[0],VG1->estimate()[1],VG1->estimate()[2]);
     const Eigen::Matrix3d dR = mpInt->GetDeltaRotation(b1).cast<double>();
     const Eigen::Vector3d dV = mpInt->GetDeltaVelocity(b1).cast<double>();

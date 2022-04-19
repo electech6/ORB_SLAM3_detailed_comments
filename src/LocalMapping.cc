@@ -1547,10 +1547,8 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
         pKF = pKF->mPrevKF;
     }
     lpKF.push_front(pKF);
-    // 以相同内容再构建一个vector
+    // 同样内容再构建一个和lpKF一样的容器vpKF
     vector<KeyFrame*> vpKF(lpKF.begin(),lpKF.end());
-
-    // TODO 跟上面重复？
     if(vpKF.size()<nMinKF)
         return;
 
