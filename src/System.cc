@@ -569,6 +569,13 @@ void System::Shutdown()
 
     cout << "Shutdown" << endl;
 
+    if (mpViewer)
+    {
+        mpViewer->RequestFinish();
+        while (!mpViewer->isFinished())
+            usleep(5000);
+    }
+
     mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
     /*if(mpViewer)
@@ -579,22 +586,25 @@ void System::Shutdown()
     }*/
 
     // Wait until all thread have effectively stopped
-    /*while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
+    // 源代码这里注释掉了，但是不执行会有锁报错
+    while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
     {
-        if(!mpLocalMapper->isFinished())
-            cout << "mpLocalMapper is not finished" << endl;*/
-        /*if(!mpLoopCloser->isFinished())
-            cout << "mpLoopCloser is not finished" << endl;
-        if(mpLoopCloser->isRunningGBA()){
-            cout << "mpLoopCloser is running GBA" << endl;
-            cout << "break anyway..." << endl;
-            break;
-        }*/
-        /*usleep(5000);
-    }*/
+        // if(!mpLocalMapper->isFinished())
+        //     cout << "mpLocalMapper is not finished" << endl;
+        // if(!mpLoopCloser->isFinished())
+        //     cout << "mpLoopCloser is not finished" << endl;
+        // if(mpLoopCloser->isRunningGBA()){
+        //     cout << "mpLoopCloser is running GBA" << endl;
+        //     cout << "break anyway..." << endl;
+        //     break;
+        // }
+        usleep(5000);
+    }
+
 
     if(!mStrSaveAtlasToFile.empty())
     {
+        std::cout << "开始保存地图" << std::endl;
         Verbose::PrintMess("Atlas saving to file " + mStrSaveAtlasToFile, Verbose::VERBOSITY_NORMAL);
         SaveAtlas(FileType::BINARY_FILE);
     }
