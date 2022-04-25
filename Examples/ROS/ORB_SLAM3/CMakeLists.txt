@@ -30,13 +30,12 @@ endif()
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../../cmake_modules)
 
-find_package(OpenCV 3.0 QUIET)
-if(NOT OpenCV_FOUND)
-   find_package(OpenCV 2.4.3 QUIET)
+# 要保证整个工程的opencv版本一致，包括dbow，源码以及ros相关的
+# 3 4 都可以正常运行
+find_package(OpenCV 3.2)
    if(NOT OpenCV_FOUND)
-      message(FATAL_ERROR "OpenCV > 2.4.3 not found.")
+      message(FATAL_ERROR "OpenCV > 3.2 not found.")
    endif()
-endif()
 
 find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
@@ -46,6 +45,7 @@ ${PROJECT_SOURCE_DIR}
 ${PROJECT_SOURCE_DIR}/../../../
 ${PROJECT_SOURCE_DIR}/../../../include
 ${PROJECT_SOURCE_DIR}/../../../include/CameraModels
+${PROJECT_SOURCE_DIR}/../../../Thirdparty/Sophus
 ${Pangolin_INCLUDE_DIRS}
 )
 
@@ -69,15 +69,16 @@ ${LIBS}
 )
 
 # Node for monocular camera (Augmented Reality Demo)
-rosbuild_add_executable(MonoAR
-src/AR/ros_mono_ar.cc
-src/AR/ViewerAR.h
-src/AR/ViewerAR.cc
-)
+# 由于里面代码没有将cv::mat 改成 SOPUS的暂时注释掉，不然会报错
+# rosbuild_add_executable(MonoAR
+# src/AR/ros_mono_ar.cc
+# src/AR/ViewerAR.h
+# src/AR/ViewerAR.cc
+# )
 
-target_link_libraries(MonoAR
-${LIBS}
-)
+# target_link_libraries(MonoAR
+# ${LIBS}
+# )
 
 # Node for stereo camera
 rosbuild_add_executable(Stereo

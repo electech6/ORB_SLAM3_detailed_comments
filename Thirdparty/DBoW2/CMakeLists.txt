@@ -28,8 +28,9 @@ set(SRCS_DUTILS
   DUtils/Random.cpp
   DUtils/Timestamp.cpp)
 
-
-find_package(OpenCV 4 QUIET)
+# 要保证整个工程的opencv版本一致，包括dbow，源码以及ros相关的
+# 3 4 都可以正常运行
+find_package(OpenCV 3.2 QUIET)
 if(NOT OpenCV_FOUND)
    find_package(OpenCV 3.0 QUIET)
    if(NOT OpenCV_FOUND)
