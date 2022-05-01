@@ -2002,7 +2002,7 @@ void Tracking::Track()
             // 如果当前图像时间戳比前一帧图像时间戳小，说明出错了，清除imu数据，创建新的子地图
             cerr << "ERROR: Frame with a timestamp older than previous frame detected!" << endl;
             unique_lock<mutex> lock(mMutexImuQueue);
-            mlQueueImuData.clear();
+            // mlQueueImuData.clear();
             // 创建新地图
             CreateMapInAtlas();
             return;
@@ -3126,6 +3126,7 @@ void Tracking::CreateMapInAtlas()
     mLastFrame = Frame();
     mCurrentFrame = Frame();
     mvIniMatches.clear();
+    mlQueueImuData.clear();
 
     mbCreatedMap = true;
 }

@@ -1578,6 +1578,8 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
         Eigen::Matrix3f Rwg;
         Eigen::Vector3f dirG;
         dirG.setZero();
+
+        int have_imu_num = 0;
         for(vector<KeyFrame*>::iterator itKF = vpKF.begin(); itKF!=vpKF.end(); itKF++)
         {
             if (!(*itKF)->mpImuPreintegrated)
@@ -1585,6 +1587,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
             if (!(*itKF)->mPrevKF)
                 continue;
 
+            have_imu_num++;
             // 初始化时关于速度的预积分定义Ri.t()*(s*Vj - s*Vi - Rwg*g*tij)
             dirG -= (*itKF)->mPrevKF->GetImuRotation() * (*itKF)->mpImuPreintegrated->GetUpdatedDeltaVelocity();
             // 求取实际的速度，位移/时间
@@ -1592,6 +1595,15 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
             (*itKF)->SetVelocity(_vel);
             (*itKF)->mPrevKF->SetVelocity(_vel);
         }
+
+        if (have_imu_num < 6)
+        {
+            cout << "imu初始化失败, 由于带有imu预积分信息的关键帧数量太少" << endl;
+            bInitializing=false;
+            mbBadImu = true;
+            return;
+        }
+
         // dirG = sV1 - sVn + n*Rwg*g*t
         // 归一化
         dirG = dirG/dirG.norm();
