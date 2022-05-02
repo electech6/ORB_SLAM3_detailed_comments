@@ -1632,7 +1632,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     }
 
     // Step 2 ：将深度相机的disparity转为Depth , 也就是转换成为真正尺度下的深度
-    if((fabs(mDepthMapFactor-1.0f)>1e-5) || imDepth.type()!=CV_32F)
+    if((fabs(mDepthMapFactor-1.0f)>1e-5) && imDepth.type()!=CV_32F)
         imDepth.convertTo(imDepth,CV_32F,mDepthMapFactor);
 
     // Step 3：构造Frame
