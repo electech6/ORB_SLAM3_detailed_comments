@@ -294,6 +294,7 @@ public:
 
     void Update(const double *pu)
     {
+        // 强行优化不可观的数据，会导致不收敛
         Rwg = Rwg * ExpSO3(pu[0], pu[1], 0.0);
     }
 
@@ -436,6 +437,7 @@ public:
     }
 
     // 由2*2的像素点信息矩阵变成了9*9的关于旋转平移与三维点坐标的信息矩阵
+    // 可以理解为像素的不确定性给旋转平移跟三维点带来了多大的不确定性
     Eigen::Matrix<double, 9, 9> GetHessian()
     {
         linearizeOplus();

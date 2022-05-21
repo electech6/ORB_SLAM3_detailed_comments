@@ -4777,7 +4777,7 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
 
     // mlRelativeFramePoses 存放的是Tcr
     // 三个变量一一对应
-    // 这部分操作貌似没用
+    // mlRelativeFramePoses用于输出位姿，因此初始化之前里面数据没有尺度，所以要更新下尺度
     for(auto lit=mlRelativeFramePoses.begin(),lend=mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lbL++)
     {
         if(*lbL)

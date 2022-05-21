@@ -189,9 +189,9 @@ void EdgeSE3ProjectXYZ::linearizeOplus()
     _jacobianOplusXi = projectJac * T.rotation().toRotationMatrix();
 
     Eigen::Matrix<double, 3, 6> SE3deriv;
-    SE3deriv << 0.f, z, -y, 1.f, 0.f, 0.f,
-        -z, 0.f, x, 0.f, 1.f, 0.f,
-        y, -x, 0.f, 0.f, 0.f, 1.f;
+    SE3deriv << 0.f,   z,  -y, 1.f, 0.f, 0.f,
+                 -z, 0.f,   x, 0.f, 1.f, 0.f,
+                  y,  -x, 0.f, 0.f, 0.f, 1.f;
 
     _jacobianOplusXj = projectJac * SE3deriv;
 }
@@ -252,9 +252,9 @@ void EdgeSE3ProjectXYZToBody::linearizeOplus()
     double z = X_l[2];
 
     Eigen::Matrix<double, 3, 6> SE3deriv;
-    SE3deriv << 0.f, z, -y, 1.f, 0.f, 0.f,
-        -z, 0.f, x, 0.f, 1.f, 0.f,
-        y, -x, 0.f, 0.f, 0.f, 1.f;
+    SE3deriv << 0.f,   z,  -y, 1.f, 0.f, 0.f,
+                 -z, 0.f,   x, 0.f, 1.f, 0.f,
+                  y,  -x, 0.f, 0.f, 0.f, 1.f;
     /*
         注意这里是对李代数求导，ρlw != tlw 所以不能使用Pl = Rlw*Pw + tlw
         Pl = EXP(ξlw)*Pw    Pr = Rrl * EXP(ξlw) * Pw + trl

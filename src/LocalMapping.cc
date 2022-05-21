@@ -236,7 +236,7 @@ void LocalMapping::Run()
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
                     // 在函数InitializeIMU里设置IMU成功初始化标志 SetImuInitialized
-                    // IMU第一阶段初始化
+                    // IMU第一次初始化
                     if (mbMonocular)
                         InitializeIMU(1e2, 1e10, true);
                     else
@@ -259,7 +259,7 @@ void LocalMapping::Run()
                 // Step 9 如果距离IMU第一阶段初始化成功累计时间差小于100s，进行VIBA
                 if ((mTinit<50.0f) && mbInertial)
                 {
-                    // Step 9.1 根据条件判断是否进行VIBA1（IMU第二阶段初始化）
+                    // Step 9.1 根据条件判断是否进行VIBA1（IMU第二次初始化）
                     // 条件：1、当前关键帧所在的地图还未完成IMU初始化---并且--------2、正常跟踪状态----------
                     if(mpCurrentKeyFrame->GetMap()->isImuInitialized() && mpTracker->mState==Tracking::OK) // Enter here everytime local-mapping is called
                     {
@@ -278,7 +278,7 @@ void LocalMapping::Run()
                                 cout << "end VIBA 1" << endl;
                             }
                         }
-                        // Step 9.2 根据条件判断是否进行VIBA2（IMU第三阶段初始化）
+                        // Step 9.2 根据条件判断是否进行VIBA2（IMU第三次初始化）
                         // 当前关键帧所在的地图还未完成VIBA 2
                         else if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2()){
                             if (mTinit>15.0f){
@@ -1605,20 +1605,20 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
         }
 
         // dirG = sV1 - sVn + n*Rwg*g*t
-        // 归一化
+        // 归一化，约等于重力在世界坐标系下的方向
         dirG = dirG/dirG.norm();
         // 原本的重力方向
         Eigen::Vector3f gI(0.0f, 0.0f, -1.0f);
-        // 求速度方向与重力方向的角轴
+        // 求重力在世界坐标系下的方向与重力在重力坐标系下的方向的叉乘
         Eigen::Vector3f v = gI.cross(dirG);
-        // 求角轴模长
+        // 求叉乘模长
         const float nv = v.norm();
         // 求转角大小
         const float cosg = gI.dot(dirG);
         const float ang = acos(cosg);
-        // 先计算旋转向量，在除去角轴大小
+        // v/nv 表示垂直于两个向量的轴  ang 表示转的角度，组成角轴
         Eigen::Vector3f vzg = v*ang/nv;
-        // 获得重力方向到当前速度方向的旋转向量
+        // 获得重力坐标系到世界坐标系的旋转矩阵的初值
         Rwg = Sophus::SO3f::exp(vzg).matrix();
         mRwg = Rwg.cast<double>();
         mTinit = mpCurrentKeyFrame->mTimeStamp-mFirstTs;
@@ -1691,7 +1691,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
     if (bFIBA)
     {
         // 5. 承接上一步纯imu优化，按照之前的结果更新了尺度信息及适应重力方向，所以要结合地图进行一次视觉加imu的全局优化，这次带了MP等信息
-        // 1.0版本里面不直接赋值了，而是将所有优化后的信息保存到变量里面
+        // ! 1.0版本里面不直接赋值了，而是将所有优化后的信息保存到变量里面
         if (priorA!=0.f)
             Optimizer::FullInertialBA(mpAtlas->GetCurrentMap(), 100, false, mpCurrentKeyFrame->mnId, NULL, true, priorG, priorA);
         else
@@ -1708,7 +1708,8 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
     unsigned long GBAid = mpCurrentKeyFrame->mnId;
 
     // Process keyframes in the queue
-    // 6. 处理一下新来的关键帧，这些关键帧没有参与优化
+    // 6. 处理一下新来的关键帧，这些关键帧没有参与优化，但是这部分bInitializing为true，只在第2次跟第3次初始化会有新的关键帧进来
+    // 这部分关键帧也需要被更新
     while(CheckNewKeyFrames())
     {
         ProcessNewKeyFrame();
@@ -1718,7 +1719,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 
     // Correct keyframes starting at map first keyframe
     // 7. 更新位姿与三维点
-    // 获取地图中初始关键帧
+    // 获取地图中初始关键帧，第一帧肯定经过修正的
     list<KeyFrame*> lpKFtoCheck(mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.begin(),mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.end());
 
     // 初始就一个关键帧，顺藤摸瓜找到父子相连的所有关键帧

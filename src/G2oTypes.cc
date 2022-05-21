@@ -225,6 +225,7 @@ void ImuCamPose::Update(const double *pu)
     ut << pu[3], pu[4], pu[5];
 
     // Update body pose
+    // 更新的是imu位姿
     twb += Rwb * ut;
     Rwb = Rwb * ExpSO3(ur);
 
@@ -398,6 +399,11 @@ void EdgeMono::linearizeOplus()
     const Eigen::Matrix3d &Rcb = VPose->estimate().Rcb[cam_idx];
 
     const Eigen::Matrix<double,2,3> proj_jac = VPose->estimate().pCamera[cam_idx]->projectJac(Xc);
+
+    // 误差 = 观测-预测
+    // -1 误差相对于预测的
+    // proj_jac 像素相对于相机坐标系下的三维点的雅克比
+    // Rcw 相机坐标系下的三维点 相对于世界坐标系下的三维点雅克比
     _jacobianOplusXi = -proj_jac * Rcw;
 
     Eigen::Matrix<double,3,6> SE3deriv;
@@ -409,7 +415,16 @@ void EdgeMono::linearizeOplus()
                  -z , 0.0,   x, 0.0, 1.0, 0.0,
                   y ,  -x, 0.0, 0.0, 0.0, 1.0;
 
-    _jacobianOplusXj = proj_jac * Rcb * SE3deriv; // TODO optimize this product
+    // proj_jac 像素相对于相机坐标系下的三维点的雅克比
+    // Rcb 相机坐标系下的三维点 相对于imu坐标系下的三维点雅克比
+    // SE3deriv imu坐标系下的三维点 相对于 imu rt的雅克比
+    // Rwb.t() * (Pw - twb) = Pb
+    // 求Pb对于Rwb与twb的雅克比，使用扰动的方式 Rwb -> Rwb * EXP(φ)  twb -> twb + Rwb * δt
+    // 先带入Rwb (Rwb * EXP(φ)).t() * (Pw - twb) - Rwb.t() * (Pw - twb)
+    // 打开后算得imu坐标系下的三维点 相对于 imu r的雅克比为Pb^
+    // 同理带入t可得imu坐标系下的三维点 相对于 imu t的雅克比为 -I
+    // 差了个负号，因为与proj_jac负号相抵，因此是正确的
+    _jacobianOplusXj = proj_jac * Rcb * SE3deriv; // symbol different becasue of update mode
 }
 
 /** 
