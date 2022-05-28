@@ -323,9 +323,11 @@ bool KannalaBrandt8::epipolarConstrain(GeometricCamera *pCamera2, const cv::KeyP
                                         const Eigen::Matrix3f &R12, const Eigen::Vector3f &t12, const float sigmaLevel, const float unc)
 {
     Eigen::Vector3f p3D;
+    // 用三角化出点并验证的这个过程代替极线验证
     return this->TriangulateMatches(pCamera2, kp1, kp2, R12, t12, sigmaLevel, unc, p3D) > 0.0001f;
 }
 
+// 没用
 bool KannalaBrandt8::matchAndtriangulate(const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, GeometricCamera *pOther,
                                             Sophus::SE3f &Tcw1, Sophus::SE3f &Tcw2,
                                             const float sigmaLevel1, const float sigmaLevel2,
@@ -439,7 +441,7 @@ float KannalaBrandt8::TriangulateMatches(
     const Eigen::Matrix3f &R12, const Eigen::Vector3f &t12, const float sigmaLevel,
     const float unc, Eigen::Vector3f &p3D)
 {
-    // 1. 得到对应特征点的相平面坐标
+    // 1. 得到对应特征点的归一化平面坐标
     Eigen::Vector3f r1 = this->unprojectEig(kp1.pt);
     Eigen::Vector3f r2 = pCamera2->unprojectEig(kp2.pt);
 

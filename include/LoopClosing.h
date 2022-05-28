@@ -180,7 +180,7 @@ protected:
     std::vector<KeyFrame*> mvpCurrentConnectedKFs;
     std::vector<MapPoint*> mvpCurrentMatchedPoints;
     std::vector<MapPoint*> mvpLoopMapPoints;
-    cv::Mat mScw;
+
     g2o::Sim3 mg2oScw;
 
     //-------
