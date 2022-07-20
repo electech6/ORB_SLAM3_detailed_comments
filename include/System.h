@@ -193,7 +193,7 @@ public:
 #endif
 
 private:
-
+    void DrawMapPoints();
     void SaveAtlas(int type);
     bool LoadAtlas(int type);
 

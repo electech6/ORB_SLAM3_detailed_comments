@@ -302,7 +302,7 @@ public:
     double mTimeORB_Ext;
     double mTimeStereoMatch;
 #endif
-
+    cv::Mat image;  // 应该都是黑白的
 private:
 
     // Undistort keypoints given OpenCV distortion parameters.

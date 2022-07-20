@@ -306,6 +306,8 @@ public:
     bool bImu;
 
     // The following variables are accesed from only 1 thread or never change (no mutex needed).
+    // 这么做内存会暴增，不过只是为了作业，跑一个短的数据集就可
+    cv::Mat image;  // 应该都是黑白的
 public:
 
     static long unsigned int nNextId;

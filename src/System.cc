@@ -600,7 +600,7 @@ void System::Shutdown()
         // }
         usleep(5000);
     }
-
+    DrawMapPoints();
 
     if(!mStrSaveAtlasToFile.empty())
     {
@@ -1376,6 +1376,27 @@ void System::SaveDebugData(const int &initIdx)
     f.close();
 }
 
+void System::DrawMapPoints()
+{
+    // 推荐跑单目模式，其他模式也可
+    Map * cur_map = mpAtlas->GetCurrentMap();
+    std::vector<ORB_SLAM3::MapPoint *> all_mps = cur_map->GetAllMapPoints();
+
+    int point_num = std::min(int(all_mps.size()), 5);
+    for (int i = 0; i < point_num; i++)
+    {
+        if (!all_mps[i] || all_mps[i]->isBad())
+            continue;
+
+        // 提示1，通过mappoint的观测 all_mps[i]->GetObservations() 获取观测信息
+
+        // 提示2，遍历每一个观测，得到对应关键帧以及特征点的索引，可以找到对应特征点，注意选mvKeys还是mvKeysUn这个要自己决定
+
+        // 提示3，拷贝keyframe里面的图像画上点，然后保存图片到一个文件夹下，一个文件夹对应一个mappoint，涉及到文件夹的创建及命名（可以以mappoint的id为名）
+
+        // 提示4，不需要所有mappoint的观测都画，画5~10个即可
+    }
+}
 
 int System::GetTrackingState()
 {
