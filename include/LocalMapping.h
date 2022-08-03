@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -25,7 +25,7 @@
 #include "LoopClosing.h"
 #include "Tracking.h"
 #include "KeyFrameDatabase.h"
-#include "Initializer.h"
+#include "Settings.h"
 
 #include <mutex>
 
@@ -41,6 +41,7 @@ class Atlas;
 class LocalMapping
 {
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     LocalMapping(System* pSys, Atlas* pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName=std::string());
 
     void SetLoopCloser(LoopClosing* pLoopCloser);
@@ -88,12 +89,17 @@ public:
     double mScale;
     double mInitTime;
     double mCostTime;
-    bool mbNewInit;
+
     unsigned int mInitSect;
     unsigned int mIdxInit;
     unsigned int mnKFs;
     double mFirstTs;
     int mnMatchesInliers;
+
+    // For debugging (erase in normal mode)
+    int mInitFr;
+    int mIdxIteration;
+    string strSequence;
 
     bool mbNotBA1;
     bool mbNotBA2;
@@ -133,16 +139,10 @@ protected:
     void SearchInNeighbors();
     void KeyFrameCulling();
 
-    cv::Mat ComputeF12(KeyFrame* &pKF1, KeyFrame* &pKF2);
-    cv::Matx33f ComputeF12_(KeyFrame* &pKF1, KeyFrame* &pKF2);
-
-    cv::Mat SkewSymmetricMatrix(const cv::Mat &v);
-    cv::Matx33f SkewSymmetricMatrix_(const cv::Matx31f &v);
-
     System *mpSystem;
 
-    bool mbMonocular;   //mSensor==MONOCULAR || mSensor==IMU_MONOCULAR
-    bool mbInertial;    //mSensor==IMU_MONOCULAR || mSensor==IMU_STEREO
+    bool mbMonocular;
+    bool mbInertial;
 
     void ResetIfRequested();
     bool mbResetRequested;
@@ -178,11 +178,10 @@ protected:
 
     bool mbAcceptKeyFrames;
     std::mutex mMutexAccept;
-    // IMU初始化函数，通过控制不同的参数来表示不同阶段
+
     void InitializeIMU(float priorG = 1e2, float priorA = 1e6, bool bFirst = false);
-    // 单目惯性模式下优化尺度和重力方向
     void ScaleRefinement();
-    //跟踪线程使用，如果为true，暂不添加关键帧
+
     bool bInitializing;
 
     Eigen::MatrixXd infoInertial;
@@ -195,7 +194,8 @@ protected:
 
     //DEBUG
     ofstream f_lm;
-};
+
+    };
 
 } //namespace ORB_SLAM
 

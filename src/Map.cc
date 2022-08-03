@@ -1,77 +1,80 @@
 /**
-* This file is part of ORB-SLAM3
-*
-* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
-* Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
-*
-* ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
-* License as published by the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* ORB-SLAM3 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
-* the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License along with ORB-SLAM3.
-* If not, see <http://www.gnu.org/licenses/>.
-*/
-
+ * This file is part of ORB-SLAM3
+ *
+ * Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+ * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+ *
+ * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+ * License as published by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * ORB-SLAM3 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+ * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with ORB-SLAM3.
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include "Map.h"
 
-#include<mutex>
+#include <mutex>
 
 namespace ORB_SLAM3
 {
 
-long unsigned int Map::nNextId=0;
+long unsigned int Map::nNextId = 0;
 
-Map::Map():mnMaxKFid(0),mnBigChangeIdx(0), mbImuInitialized(false), mnMapChange(0), mpFirstRegionKF(static_cast<KeyFrame*>(NULL)),
-mbFail(false), mIsInUse(false), mHasTumbnail(false), mbBad(false), mnMapChangeNotified(0), mbIsInertial(false), mbIMU_BA1(false), mbIMU_BA2(false)
+Map::Map()
+    : mnMaxKFid(0), mnBigChangeIdx(0), mbImuInitialized(false), mnMapChange(0), mpFirstRegionKF(static_cast<KeyFrame *>(NULL)),
+    mbFail(false), mIsInUse(false), mHasTumbnail(false), mbBad(false), mnMapChangeNotified(0), mbIsInertial(false), mbIMU_BA1(false), mbIMU_BA2(false)
 {
-    mnId=nNextId++;
-    mThumbnail = static_cast<GLubyte*>(NULL);
+    mnId = nNextId++;
+    mThumbnail = static_cast<GLubyte *>(NULL);
 }
 
-Map::Map(int initKFid):mnInitKFid(initKFid), mnMaxKFid(initKFid),mnLastLoopKFid(initKFid), mnBigChangeIdx(0), mIsInUse(false),
-                       mHasTumbnail(false), mbBad(false), mbImuInitialized(false), mpFirstRegionKF(static_cast<KeyFrame*>(NULL)),
-                       mnMapChange(0), mbFail(false), mnMapChangeNotified(0), mbIsInertial(false), mbIMU_BA1(false), mbIMU_BA2(false)
+Map::Map(int initKFid)
+    : mnInitKFid(initKFid), mnMaxKFid(initKFid), /*mnLastLoopKFid(initKFid),*/ mnBigChangeIdx(0), mIsInUse(false),
+    mHasTumbnail(false), mbBad(false), mbImuInitialized(false), mpFirstRegionKF(static_cast<KeyFrame *>(NULL)),
+    mnMapChange(0), mbFail(false), mnMapChangeNotified(0), mbIsInertial(false), mbIMU_BA1(false), mbIMU_BA2(false)
 {
-    mnId=nNextId++;
-    mThumbnail = static_cast<GLubyte*>(NULL);
+    mnId = nNextId++;
+    mThumbnail = static_cast<GLubyte *>(NULL);
 }
 
 Map::~Map()
 {
-    //TODO: erase all points from memory
+    // TODO: erase all points from memory
     mspMapPoints.clear();
 
-    //TODO: erase all keyframes from memory
+    // TODO: erase all keyframes from memory
     mspKeyFrames.clear();
 
-    if(mThumbnail)
+    if (mThumbnail)
         delete mThumbnail;
-    mThumbnail = static_cast<GLubyte*>(NULL);
+    mThumbnail = static_cast<GLubyte *>(NULL);
 
     mvpReferenceMapPoints.clear();
     mvpKeyFrameOrigins.clear();
 }
-//在地图中插入关键帧,同时更新关键帧的最大id
+
+// 在地图中插入关键帧,同时更新关键帧的最大id
 void Map::AddKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexMap);
-    if(mspKeyFrames.empty()){
+    if (mspKeyFrames.empty())
+    {
         cout << "First KF:" << pKF->mnId << "; Map init KF:" << mnInitKFid << endl;
         mnInitKFid = pKF->mnId;
         mpKFinitial = pKF;
         mpKFlowerID = pKF;
     }
     mspKeyFrames.insert(pKF);
-    if(pKF->mnId>mnMaxKFid)
+    if (pKF->mnId > mnMaxKFid)
     {
-        mnMaxKFid=pKF->mnId;
+        mnMaxKFid = pKF->mnId;
     }
-    if(pKF->mnId<mpKFlowerID->mnId)
+    if (pKF->mnId < mpKFlowerID->mnId)
     {
         mpKFlowerID = pKF;
     }
@@ -100,8 +103,8 @@ void Map::EraseMapPoint(MapPoint *pMP)
     unique_lock<mutex> lock(mMutexMap);
     mspMapPoints.erase(pMP);
 
-    //下面是作者加入的注释. 实际上只是从std::set中删除了地图点的指针, 原先地图点
-    //占用的内存区域并没有得到释放
+    // 下面是作者加入的注释. 实际上只是从std::set中删除了地图点的指针, 原先地图点
+    // 占用的内存区域并没有得到释放
     // TODO: This only erase the pointer.
     // Delete the MapPoint
 }
@@ -110,12 +113,12 @@ void Map::EraseKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexMap);
     mspKeyFrames.erase(pKF);
-    if(mspKeyFrames.size()>0)
+    if (mspKeyFrames.size() > 0)
     {
-        if(pKF->mnId == mpKFlowerID->mnId)
+        if (pKF->mnId == mpKFlowerID->mnId)
         {
-            vector<KeyFrame*> vpKFs = vector<KeyFrame*>(mspKeyFrames.begin(),mspKeyFrames.end());
-            sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
+            vector<KeyFrame *> vpKFs = vector<KeyFrame *>(mspKeyFrames.begin(), mspKeyFrames.end());
+            sort(vpKFs.begin(), vpKFs.end(), KeyFrame::lId);
             mpKFlowerID = vpKFs[0];
         }
     }
@@ -130,9 +133,9 @@ void Map::EraseKeyFrame(KeyFrame *pKF)
 
 /*
  * @brief 设置参考MapPoints，将用于DrawMapPoints函数画图
+ * 设置参考地图点用于绘图显示局部地图点（红色）
  * @param vpMPs Local MapPoints
  */
-// 设置参考地图点用于绘图显示局部地图点（红色）
 void Map::SetReferenceMapPoints(const vector<MapPoint *> &vpMPs)
 {
     unique_lock<mutex> lock(mMutexMap);
@@ -151,36 +154,36 @@ int Map::GetLastBigChangeIdx()
     return mnBigChangeIdx;
 }
 
-//获取地图中的所有关键帧
-vector<KeyFrame*> Map::GetAllKeyFrames()
+// 获取地图中的所有关键帧
+vector<KeyFrame *> Map::GetAllKeyFrames()
 {
     unique_lock<mutex> lock(mMutexMap);
-    return vector<KeyFrame*>(mspKeyFrames.begin(),mspKeyFrames.end());
+    return vector<KeyFrame *>(mspKeyFrames.begin(), mspKeyFrames.end());
 }
 
-//获取地图中的所有地图点
-vector<MapPoint*> Map::GetAllMapPoints()
+// 获取地图中的所有地图点
+vector<MapPoint *> Map::GetAllMapPoints()
 {
     unique_lock<mutex> lock(mMutexMap);
-    return vector<MapPoint*>(mspMapPoints.begin(),mspMapPoints.end());
+    return vector<MapPoint *>(mspMapPoints.begin(), mspMapPoints.end());
 }
 
-//获取地图点数目
+// 获取地图点数目
 long unsigned int Map::MapPointsInMap()
 {
     unique_lock<mutex> lock(mMutexMap);
     return mspMapPoints.size();
 }
 
-//获取地图中的关键帧数目
+// 获取地图中的关键帧数目
 long unsigned int Map::KeyFramesInMap()
 {
     unique_lock<mutex> lock(mMutexMap);
     return mspKeyFrames.size();
 }
 
-//获取参考地图点
-vector<MapPoint*> Map::GetReferenceMapPoints()
+// 获取参考地图点
+vector<MapPoint *> Map::GetReferenceMapPoints()
 {
     unique_lock<mutex> lock(mMutexMap);
     return mvpReferenceMapPoints;
@@ -208,7 +211,7 @@ long unsigned int Map::GetMaxKFid()
     return mnMaxKFid;
 }
 
-KeyFrame* Map::GetOriginKF()
+KeyFrame *Map::GetOriginKF()
 {
     return mpKFinitial;
 }
@@ -225,20 +228,19 @@ void Map::SetStoredMap()
 
 void Map::clear()
 {
-//    for(set<MapPoint*>::iterator sit=mspMapPoints.begin(), send=mspMapPoints.end(); sit!=send; sit++)
-//        delete *sit;
+    //    for(set<MapPoint*>::iterator sit=mspMapPoints.begin(), send=mspMapPoints.end(); sit!=send; sit++)
+    //        delete *sit;
 
-    for(set<KeyFrame*>::iterator sit=mspKeyFrames.begin(), send=mspKeyFrames.end(); sit!=send; sit++)
+    for (set<KeyFrame *>::iterator sit = mspKeyFrames.begin(), send = mspKeyFrames.end(); sit != send; sit++)
     {
-        KeyFrame* pKF = *sit;
-        pKF->UpdateMap(static_cast<Map*>(NULL));
-//        delete *sit;
+        KeyFrame *pKF = *sit;
+        pKF->UpdateMap(static_cast<Map *>(NULL));
+        //        delete *sit;
     }
 
     mspMapPoints.clear();
     mspKeyFrames.clear();
     mnMaxKFid = mnInitKFid;
-    mnLastLoopKFid = 0;
     mbImuInitialized = false;
     mvpReferenceMapPoints.clear();
     mvpKeyFrameOrigins.clear();
@@ -261,43 +263,6 @@ bool Map::IsBad()
     return mbBad;
 }
 
-void Map::RotateMap(const cv::Mat &R)
-{
-    unique_lock<mutex> lock(mMutexMap);
-
-    cv::Mat Txw = cv::Mat::eye(4,4,CV_32F);
-    R.copyTo(Txw.rowRange(0,3).colRange(0,3));
-
-    KeyFrame* pKFini = mvpKeyFrameOrigins[0];
-    cv::Mat Twc_0 = pKFini->GetPoseInverse();
-    cv::Mat Txc_0 = Txw*Twc_0;
-    cv::Mat Txb_0 = Txc_0*pKFini->mImuCalib.Tcb;
-    cv::Mat Tyx = cv::Mat::eye(4,4,CV_32F);
-    Tyx.rowRange(0,3).col(3) = -Txb_0.rowRange(0,3).col(3);
-    cv::Mat Tyw = Tyx*Txw;
-    cv::Mat Ryw = Tyw.rowRange(0,3).colRange(0,3);
-    cv::Mat tyw = Tyw.rowRange(0,3).col(3);
-
-    for(set<KeyFrame*>::iterator sit=mspKeyFrames.begin(); sit!=mspKeyFrames.end(); sit++)
-    {
-        KeyFrame* pKF = *sit;
-        cv::Mat Twc = pKF->GetPoseInverse();
-        cv::Mat Tyc = Tyw*Twc;
-        cv::Mat Tcy = cv::Mat::eye(4,4,CV_32F);
-        Tcy.rowRange(0,3).colRange(0,3) = Tyc.rowRange(0,3).colRange(0,3).t();
-        Tcy.rowRange(0,3).col(3) = -Tcy.rowRange(0,3).colRange(0,3)*Tyc.rowRange(0,3).col(3);
-        pKF->SetPose(Tcy);
-        cv::Mat Vw = pKF->GetVelocity();
-        pKF->SetVelocity(Ryw*Vw);
-    }
-    for(set<MapPoint*>::iterator sit=mspMapPoints.begin(); sit!=mspMapPoints.end(); sit++)
-    {
-        MapPoint* pMP = *sit;
-        pMP->SetWorldPos(Ryw*pMP->GetWorldPos()+tyw);
-        pMP->UpdateNormalAndDepth();
-    }
-}
-
 // 恢复尺度及重力方向
 /** imu在localmapping中初始化，LocalMapping::InitializeIMU中使用，误差包含三个残差与两个偏置
  * 地图融合时也会使用
@@ -306,24 +271,16 @@ void Map::RotateMap(const cv::Mat &R)
  * @param bScaledVel 将尺度更新到速度
  * @param t 默认cv::Mat::zeros(cv::Size(1,3),CV_32F)
  */
-void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScaledVel, const cv::Mat t)
+void Map::ApplyScaledRotation(const Sophus::SE3f &T, const float s, const bool bScaledVel)
 {
     unique_lock<mutex> lock(mMutexMap);
 
     // Body position (IMU) of first keyframe is fixed to (0,0,0)
-    cv::Mat Txw = cv::Mat::eye(4,4,CV_32F);
-    R.copyTo(Txw.rowRange(0,3).colRange(0,3));
+    Sophus::SE3f Tyw = T;
+    Eigen::Matrix3f Ryw = Tyw.rotationMatrix();
+    Eigen::Vector3f tyw = Tyw.translation();
 
-    cv::Mat Tyx = cv::Mat::eye(4,4,CV_32F);
-
-    cv::Mat Tyw = Tyx*Txw;
-    Tyw.rowRange(0,3).col(3) = Tyw.rowRange(0,3).col(3)+t;
-    // Tyw 中旋转部分等于R，平移部分等于t
-    // 做了很多操作，到最后还是得出了一个R跟t？感觉上面的操作像是预留了一些东西，比如在世界坐标系与第一帧有一定Rt时，只不过暂时没有用到
-    cv::Mat Ryw = Tyw.rowRange(0,3).colRange(0,3);  // R
-    cv::Mat tyw = Tyw.rowRange(0,3).col(3);         // t
-
-    for(set<KeyFrame*>::iterator sit=mspKeyFrames.begin(); sit!=mspKeyFrames.end(); sit++)
+    for (set<KeyFrame *>::iterator sit = mspKeyFrames.begin(); sit != mspKeyFrames.end(); sit++)
     {
         // 更新关键帧位姿
         /**
@@ -334,32 +291,27 @@ void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScale
          * | s*Rw2w1  tw2w1 |   *   | Rw1c    tw1c  |     =    |  s*Rw2c     s*Rw2w1*tw1c + tw2w1  |
          * |   0        1   |       |  0       1    |          |     0                1            |
          */
-
-        KeyFrame* pKF = *sit;
-        cv::Mat Twc = pKF->GetPoseInverse();
-        Twc.rowRange(0,3).col(3)*=s;
+        KeyFrame *pKF = *sit;
+        Sophus::SE3f Twc = pKF->GetPoseInverse();
+        Twc.translation() *= s;
 
         // |  Ryc     s*Ryw*twc + tyw  |
         // |   0           1           |
-        cv::Mat Tyc = Tyw*Twc;
-
-        cv::Mat Tcy = cv::Mat::eye(4,4,CV_32F);
-        Tcy.rowRange(0,3).colRange(0,3) = Tyc.rowRange(0,3).colRange(0,3).t();
-        Tcy.rowRange(0,3).col(3) = -Tcy.rowRange(0,3).colRange(0,3)*Tyc.rowRange(0,3).col(3);
+        Sophus::SE3f Tyc = Tyw * Twc;
+        Sophus::SE3f Tcy = Tyc.inverse();
         pKF->SetPose(Tcy);
         // 更新关键帧速度
-        cv::Mat Vw = pKF->GetVelocity();
-        if(!bScaledVel)
-            pKF->SetVelocity(Ryw*Vw);
+        Eigen::Vector3f Vw = pKF->GetVelocity();
+        if (!bScaledVel)
+            pKF->SetVelocity(Ryw * Vw);
         else
-            pKF->SetVelocity(Ryw*Vw*s);
-
+            pKF->SetVelocity(Ryw * Vw * s);
     }
-    for(set<MapPoint*>::iterator sit=mspMapPoints.begin(); sit!=mspMapPoints.end(); sit++)
+    for (set<MapPoint *>::iterator sit = mspMapPoints.begin(); sit != mspMapPoints.end(); sit++)
     {
         // 更新每一个mp在世界坐标系下的坐标
-        MapPoint* pMP = *sit;
-        pMP->SetWorldPos(s*Ryw*pMP->GetWorldPos()+tyw);
+        MapPoint *pMP = *sit;
+        pMP->SetWorldPos(s * Ryw * pMP->GetWorldPos() + tyw);
         pMP->UpdateNormalAndDepth();
     }
     mnMapChange++;
@@ -368,13 +320,13 @@ void Map::ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScale
 void Map::SetInertialSensor()
 {
     unique_lock<mutex> lock(mMutexMap);
-    //将mbIsInertial设置为true,将其设置为imu属性,以后的跟踪和预积分将和这个标志有关
     mbIsInertial = true;
 }
 
 bool Map::IsInertial()
 {
     unique_lock<mutex> lock(mMutexMap);
+    // 将mbIsInertial设置为true,将其设置为imu属性,以后的跟踪和预积分将和这个标志有关
     return mbIsInertial;
 }
 
@@ -402,94 +354,6 @@ bool Map::GetIniertialBA2()
     return mbIMU_BA2;
 }
 
-void Map::PrintEssentialGraph()
-{
-    //Print the essential graph
-    vector<KeyFrame*> vpOriginKFs = mvpKeyFrameOrigins;
-    int count=0;
-    cout << "Number of origin KFs: " << vpOriginKFs.size() << endl;
-    KeyFrame* pFirstKF;
-    for(KeyFrame* pKFi : vpOriginKFs)
-    {
-        if(!pFirstKF)
-            pFirstKF = pKFi;
-        else if(!pKFi->GetParent())
-            pFirstKF = pKFi;
-    }
-    if(pFirstKF->GetParent())
-    {
-        cout << "First KF in the essential graph has a parent, which is not possible" << endl;
-    }
-
-    cout << "KF: " << pFirstKF->mnId << endl;
-    set<KeyFrame*> spChilds = pFirstKF->GetChilds();
-    vector<KeyFrame*> vpChilds;
-    vector<string> vstrHeader;
-    for(KeyFrame* pKFi : spChilds){
-        vstrHeader.push_back("--");
-        vpChilds.push_back(pKFi);
-    }
-    for(int i=0; i<vpChilds.size() && count <= (mspKeyFrames.size()+10); ++i)
-    {
-        count++;
-        string strHeader = vstrHeader[i];
-        KeyFrame* pKFi = vpChilds[i];
-
-        cout << strHeader << "KF: " << pKFi->mnId << endl;
-
-        set<KeyFrame*> spKFiChilds = pKFi->GetChilds();
-        for(KeyFrame* pKFj : spKFiChilds)
-        {
-            vpChilds.push_back(pKFj);
-            vstrHeader.push_back(strHeader+"--");
-        }
-    }
-    if (count == (mspKeyFrames.size()+10))
-        cout << "CYCLE!!"    << endl;
-
-    cout << "------------------" << endl << "End of the essential graph" << endl;
-}
-
-bool Map::CheckEssentialGraph(){
-    vector<KeyFrame*> vpOriginKFs = mvpKeyFrameOrigins;
-    int count=0;
-    cout << "Number of origin KFs: " << vpOriginKFs.size() << endl;
-    KeyFrame* pFirstKF;
-    for(KeyFrame* pKFi : vpOriginKFs)
-    {
-        if(!pFirstKF)
-            pFirstKF = pKFi;
-        else if(!pKFi->GetParent())
-            pFirstKF = pKFi;
-    }
-    cout << "Checking if the first KF has parent" << endl;
-    if(pFirstKF->GetParent())
-    {
-        cout << "First KF in the essential graph has a parent, which is not possible" << endl;
-    }
-
-    set<KeyFrame*> spChilds = pFirstKF->GetChilds();
-    vector<KeyFrame*> vpChilds;
-    vpChilds.reserve(mspKeyFrames.size());
-    for(KeyFrame* pKFi : spChilds)
-        vpChilds.push_back(pKFi);
-
-    for(int i=0; i<vpChilds.size() && count <= (mspKeyFrames.size()+10); ++i)
-    {
-        count++;
-        KeyFrame* pKFi = vpChilds[i];
-        set<KeyFrame*> spKFiChilds = pKFi->GetChilds();
-        for(KeyFrame* pKFj : spKFiChilds)
-            vpChilds.push_back(pKFj);
-    }
-
-    cout << "count/tot" << count << "/" << mspKeyFrames.size() << endl;
-    if (count != (mspKeyFrames.size()-1))
-        return false;
-    else
-        return true;
-}
-
 void Map::ChangeId(long unsigned int nId)
 {
     mnId = nId;
@@ -498,7 +362,8 @@ void Map::ChangeId(long unsigned int nId)
 unsigned int Map::GetLowerKFID()
 {
     unique_lock<mutex> lock(mMutexMap);
-    if (mpKFlowerID) {
+    if (mpKFlowerID)
+    {
         return mpKFlowerID->mnId;
     }
     return 0;
@@ -528,5 +393,150 @@ void Map::SetLastMapChange(int currentChangeId)
     mnMapChangeNotified = currentChangeId;
 }
 
+/** 预保存，也就是把想保存的信息保存到备份的变量中
+ * @param spCams 相机
+ */
+void Map::PreSave(std::set<GeometricCamera *> &spCams)
+{
+    int nMPWithoutObs = 0;  // 统计用
+    // 1. 剔除一下无效观测
+    for (MapPoint *pMPi : mspMapPoints)
+    {
+        if (!pMPi || pMPi->isBad())
+            continue;
 
-} //namespace ORB_SLAM3
+        if (pMPi->GetObservations().size() == 0)
+        {
+            nMPWithoutObs++;
+        }
+        map<KeyFrame *, std::tuple<int, int>> mpObs = pMPi->GetObservations();
+        for (map<KeyFrame *, std::tuple<int, int>>::iterator it = mpObs.begin(), end = mpObs.end(); it != end; ++it)
+        {
+            if (it->first->GetMap() != this || it->first->isBad())
+            {
+                pMPi->EraseObservation(it->first);
+            }
+        }
+    }
+
+    // Saves the id of KF origins
+    // 2. 保存最开始的帧的id，貌似一个map的mvpKeyFrameOrigins里面只有一个，可以验证一下
+    mvBackupKeyFrameOriginsId.clear();
+    mvBackupKeyFrameOriginsId.reserve(mvpKeyFrameOrigins.size());
+    for (int i = 0, numEl = mvpKeyFrameOrigins.size(); i < numEl; ++i)
+    {
+        mvBackupKeyFrameOriginsId.push_back(mvpKeyFrameOrigins[i]->mnId);
+    }
+
+    // Backup of MapPoints
+    // 3. 保存一下对应的mp
+    mvpBackupMapPoints.clear();
+    for (MapPoint *pMPi : mspMapPoints)
+    {
+        if (!pMPi || pMPi->isBad())
+            continue;
+
+        mvpBackupMapPoints.push_back(pMPi);
+        pMPi->PreSave(mspKeyFrames, mspMapPoints);
+    }
+
+    // Backup of KeyFrames
+    // 4. 保存一下对应的KF
+    mvpBackupKeyFrames.clear();
+    for (KeyFrame *pKFi : mspKeyFrames)
+    {
+        if (!pKFi || pKFi->isBad())
+            continue;
+
+        mvpBackupKeyFrames.push_back(pKFi);
+        pKFi->PreSave(mspKeyFrames, mspMapPoints, spCams);
+    }
+
+    // 保存一些id
+    mnBackupKFinitialID = -1;
+    if (mpKFinitial)
+    {
+        mnBackupKFinitialID = mpKFinitial->mnId;
+    }
+
+    mnBackupKFlowerID = -1;
+    if (mpKFlowerID)
+    {
+        mnBackupKFlowerID = mpKFlowerID->mnId;
+    }
+}
+
+/** 后加载，也就是把备份的变量恢复到正常变量中
+ * @param spCams 相机
+ */
+void Map::PostLoad(KeyFrameDatabase *pKFDB, ORBVocabulary *pORBVoc /*, map<long unsigned int, KeyFrame*>& mpKeyFrameId*/, map<unsigned int, GeometricCamera *> &mpCams)
+{
+    std::copy(mvpBackupMapPoints.begin(), mvpBackupMapPoints.end(), std::inserter(mspMapPoints, mspMapPoints.begin()));
+    std::copy(mvpBackupKeyFrames.begin(), mvpBackupKeyFrames.end(), std::inserter(mspKeyFrames, mspKeyFrames.begin()));
+
+    // 1. 恢复map中的mp，注意此时mp中只恢复了保存的量
+    map<long unsigned int, MapPoint *> mpMapPointId;
+    for (MapPoint *pMPi : mspMapPoints)
+    {
+        if (!pMPi || pMPi->isBad())
+            continue;
+
+        pMPi->UpdateMap(this);
+        mpMapPointId[pMPi->mnId] = pMPi;
+    }
+
+    // 2. 恢复map中的kf，注意此时kf中只恢复了保存的量
+    map<long unsigned int, KeyFrame *> mpKeyFrameId;
+    for (KeyFrame *pKFi : mspKeyFrames)
+    {
+        if (!pKFi || pKFi->isBad())
+            continue;
+
+        pKFi->UpdateMap(this);
+        pKFi->SetORBVocabulary(pORBVoc);
+        pKFi->SetKeyFrameDatabase(pKFDB);
+        mpKeyFrameId[pKFi->mnId] = pKFi;
+    }
+
+    // References reconstruction between different instances
+    // 3. 使用mp中的备份变量恢复正常变量
+    for (MapPoint *pMPi : mspMapPoints)
+    {
+        if (!pMPi || pMPi->isBad())
+            continue;
+
+        pMPi->PostLoad(mpKeyFrameId, mpMapPointId);
+    }
+
+    // 4. 使用kf中的备份变量恢复正常变量
+    for (KeyFrame *pKFi : mspKeyFrames)
+    {
+        if (!pKFi || pKFi->isBad())
+            continue;
+
+        pKFi->PostLoad(mpKeyFrameId, mpMapPointId, mpCams);
+        pKFDB->add(pKFi);
+    }
+
+    // 5. 恢复ID
+    if (mnBackupKFinitialID != -1)
+    {
+        mpKFinitial = mpKeyFrameId[mnBackupKFinitialID];
+    }
+
+    if (mnBackupKFlowerID != -1)
+    {
+        mpKFlowerID = mpKeyFrameId[mnBackupKFlowerID];
+    }
+
+    mvpKeyFrameOrigins.clear();
+    mvpKeyFrameOrigins.reserve(mvBackupKeyFrameOriginsId.size());
+    for (int i = 0; i < mvBackupKeyFrameOriginsId.size(); ++i)
+    {
+        mvpKeyFrameOrigins.push_back(mpKeyFrameId[mvBackupKeyFrameOriginsId[i]]);
+    }
+
+    mvpBackupMapPoints.clear();
+}
+
+} // namespace ORB_SLAM3
