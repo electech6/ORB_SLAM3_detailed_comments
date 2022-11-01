@@ -255,7 +255,12 @@ void Settings::readCamera1(cv::FileStorage &fSettings)
         }
 
         // Check if we need to correct distortion from the images
-        if ((sensor_ == System::MONOCULAR || sensor_ == System::IMU_MONOCULAR) && vPinHoleDistorsion1_.size() != 0)
+        if (
+            (sensor_ == System::MONOCULAR ||
+                sensor_ == System::IMU_MONOCULAR ||
+                sensor_ == System::RGBD ||
+                sensor_ == System::IMU_RGBD) &&
+            vPinHoleDistorsion1_.size() != 0)
         {
             bNeedToUndistort_ = true;
         }
