@@ -1,12 +1,10 @@
 # ORB-SLAM3 超详细注释
 
--by 计算机视觉life 公众号旗下开源学习小组：SLAM研习社
-
 ![DEMO](https://github.com/electech6/ORB_SLAM3_detailed_comments/blob/master/demo.gif)
 
-![课程大纲](https://github.com/electech6/ORB_SLAM3_detailed_comments/blob/master/outline.png)
+独家视频课程《VIO灭霸：ORB-SLAM3公式推导+源码逐行解析+算法改进》！ [点击进入官网](https://cvlife.net/)
 
-[ORB-SLAM3 逐行源码讲解](https://cvlife.net/detail/term_6255372036a53_o5VfgR/25)
+点击进入 [小六的机器人SLAM学习圈](https://mp.weixin.qq.com/s?__biz=MzIxOTczOTM4NA==&mid=2247567299&idx=1&sn=2d6b673b6d5e396bd87ec2a28cd3d27d&chksm=97d52254a0a2ab42ff833b5fa733f2213a1ad1ec8ebdb199d96c237aa4cb21fe8e05cc77db8a#rd)，4500+人都在这里交流！
 
 ----
 # ORB-SLAM3
