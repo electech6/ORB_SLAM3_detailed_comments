@@ -39,6 +39,7 @@
 #include "Viewer.h"
 #include "ImuTypes.h"
 #include "Settings.h"
+#include "PointCloudMapping.h"
 
 
 namespace ORB_SLAM3
@@ -79,6 +80,7 @@ class Tracking;
 class LocalMapping;
 class LoopClosing;
 class Settings;
+class PointCloudMapping;
 
 class System
 {
@@ -226,6 +228,8 @@ private:
 
     // The viewer draws the map and the current camera pose. It uses Pangolin.
     Viewer* mpViewer;
+
+    PointCloudMapping* mpPointCloudMapping;
 
     FrameDrawer* mpFrameDrawer;
     MapDrawer* mpMapDrawer;

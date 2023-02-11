@@ -94,6 +94,11 @@ public:
         return mpLastKeyFrame;
     }
 
+    void SetPointCloudMapper(PointCloudMapping* pPointCloudMapping)
+    {
+        mpPointCloudMapping = pPointCloudMapping;
+    }
+
     void CreateMapInAtlas();
     //std::mutex mMutexTracks;
 
@@ -192,6 +197,8 @@ public:
     vector<double> vdTrackTotal_ms;
 #endif
 
+    cv::Mat mimLeft, mimRight;
+    cv::Mat mImDepth;
 protected:
 
     // Main tracking function. It is independent of the input sensor.
@@ -256,6 +263,7 @@ protected:
     //Other Thread Pointers
     LocalMapping* mpLocalMapper;
     LoopClosing* mpLoopClosing;
+    PointCloudMapping* mpPointCloudMapping;
 
     //ORB
     ORBextractor* mpORBextractorLeft, *mpORBextractorRight;

@@ -3,7 +3,10 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "/usr/include/eigen3",
+                "/usr/include/pcl-1.8",
+                "/usr/include/vtk-6.3"
             ],
             "defines": [
                 "_DEBUG",

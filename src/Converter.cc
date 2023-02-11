@@ -290,6 +290,15 @@ Eigen::Matrix<double,4,4> Converter::toMatrix4d(const cv::Mat &cvMat4)
     return M;
 }
 
+Eigen::Matrix<double,4,4> Converter::toMatrix4d(const Sophus::SE3f &T)
+{
+    Eigen::Matrix<double,4,4> M = Eigen::Matrix4d::Identity();
+
+    M.block<3, 3>(0, 0) = T.rotationMatrix().cast<double>();
+    M.block<3, 1>(0, 3) = T.translation().cast<double>();
+    return M;
+}
+
 /**
  * @brief cv::Mat -> Eigen::Matrix<float,3,3>
  */

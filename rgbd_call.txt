@@ -1,0 +1,7 @@
+./Examples/RGB-D/rgbd_tum ./Vocabulary/ORBvoc.txt ./Examples/RGB-D/TUM2.yaml /home/l/data/rgbd/rgbd_dataset_freiburg2_xyz ./Examples/RGB-D/associations/fr2_xyz.txt
+
+./Examples/RGB-D/rgbd_tum ./Vocabulary/ORBvoc.txt ./Examples/RGB-D/TUM2.yaml /home/l/data/rgbd/rgbd_dataset_freiburg2_large_with_loop ./Examples/RGB-D/associations/f2_large_loop.txt
+
+./Examples/RGB-D/rgbd_tum ./Vocabulary/ORBvoc.txt ./Examples/RGB-D/TUM2.yaml /home/l/data/rgbd/rgbd_dataset_freiburg2_pioneer_slam3 ./Examples/RGB-D/associations/fr2_pion_slam3.txt
+
+./Examples/RGB-D/rgbd_tum ./Vocabulary/ORBvoc.txt ./Examples/RGB-D/TUM2.yaml /home/l/data/rgbd/rgbd_dataset_freiburg2_pioneer_slam2 ./Examples/RGB-D/associations/fr2_pion_slam2.txt

@@ -123,7 +123,7 @@ int main(int argc, char **argv)
         if(ttrack<T)
             usleep((T-ttrack)*1e6);
     }
-
+    sleep(10000000);
     // Stop all threads
     SLAM.Shutdown();
 

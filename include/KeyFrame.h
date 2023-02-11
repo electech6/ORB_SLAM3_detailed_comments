@@ -37,7 +37,8 @@
 #include <boost/serialization/base_object.hpp>
 #include <boost/serialization/vector.hpp>
 #include <boost/serialization/map.hpp>
-
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
 
 namespace ORB_SLAM3
 {
@@ -306,6 +307,10 @@ public:
     bool bImu;
 
     // The following variables are accesed from only 1 thread or never change (no mutex needed).
+
+    // 建图专用
+    cv::Mat imLeftRgb, imRightRgb, imDepth;
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr mptrPointCloud;
 public:
 
     static long unsigned int nNextId;

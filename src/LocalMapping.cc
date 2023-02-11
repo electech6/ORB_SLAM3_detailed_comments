@@ -116,6 +116,7 @@ void LocalMapping::Run()
 #endif
             // BoW conversion and insertion in Map
             // Step 2 处理列表中的关键帧，包括计算BoW、更新观测、描述子、共视图，插入到地图等
+            mlNewKeyFrameForDenseMap = mlNewKeyFrames;
             ProcessNewKeyFrame();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndProcessKF = std::chrono::steady_clock::now();
@@ -316,6 +317,8 @@ void LocalMapping::Run()
 #endif
             // Step 10 将当前帧加入到闭环检测队列中
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
+            for(auto pKF : mlNewKeyFrameForDenseMap)
+                mpPointCloudMapping->insertKeyFrame(pKF);
 
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndLocalMap = std::chrono::steady_clock::now();
