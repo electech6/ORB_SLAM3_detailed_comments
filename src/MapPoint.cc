@@ -201,7 +201,7 @@ void MapPoint::AddObservation(KeyFrame* pKF, int idx)
 }
 
 // 删除某个关键帧对当前地图点的观测
-void MapPoint::EraseObservation(KeyFrame* pKF)
+void MapPoint::EraseObservation(KeyFrame* pKF, bool erase)
 {
     bool bBad=false;
     {
@@ -236,7 +236,7 @@ void MapPoint::EraseObservation(KeyFrame* pKF)
     }
     // 告知可以观测到该MapPoint的Frame，该MapPoint已被删除
     if(bBad)
-        SetBadFlag();
+        SetBadFlag(erase);
 }
 
 // 能够观测到当前地图点的所有关键帧及该地图点在KF中的索引
@@ -260,7 +260,7 @@ int MapPoint::Observations()
  * @brief 告知可以观测到该MapPoint的Frame，该MapPoint已被删除
  * 
  */
-void MapPoint::SetBadFlag()
+void MapPoint::SetBadFlag(bool erase)
 {
     map<KeyFrame*, tuple<int,int>> obs;
     {
@@ -285,7 +285,8 @@ void MapPoint::SetBadFlag()
     }
 
     // 擦除该MapPoint申请的内存
-    mpMap->EraseMapPoint(this);
+    if (erase)
+        mpMap->EraseMapPoint(this);
 }
 
 /**
@@ -769,6 +770,7 @@ void MapPoint::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP)
     mBackupObservationsId1.clear();
     mBackupObservationsId2.clear();
     // Save the id and position in each KF who view it
+    std::vector<KeyFrame*> erase_kfs;
     for(std::map<KeyFrame*,std::tuple<int,int> >::const_iterator it = mObservations.begin(), 
         end = mObservations.end(); it != end; ++it)
     {
@@ -780,10 +782,11 @@ void MapPoint::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP)
         }
         else
         {
-            EraseObservation(pKFi);
+            erase_kfs.push_back(pKFi); 
         }
     }
-
+    for (auto pKFi : erase_kfs)
+        EraseObservation(pKFi, false);
     // Save the id of the reference KF
     // 3. 备份参考关键帧ID
     if(spKF.find(mpRefKF) != spKF.end())
