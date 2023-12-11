@@ -1609,7 +1609,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
         dirG = dirG/dirG.norm();
         // 原本的重力方向
         Eigen::Vector3f gI(0.0f, 0.0f, -1.0f);
-        // 求重力在世界坐标系下的方向与重力在重力坐标系下的方向的叉乘
+        // 求“重力在重力坐标系下的方向”与的“重力在世界坐标系（纯视觉）下的方向”叉乘
         Eigen::Vector3f v = gI.cross(dirG);
         // 求叉乘模长
         const float nv = v.norm();

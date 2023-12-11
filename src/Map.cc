@@ -311,6 +311,8 @@ void Map::ApplyScaledRotation(const Sophus::SE3f &T, const float s, const bool b
     {
         // 更新每一个mp在世界坐标系下的坐标
         MapPoint *pMP = *sit;
+        if (!pMP || pMP->isBad())
+            continue;
         pMP->SetWorldPos(s * Ryw * pMP->GetWorldPos() + tyw);
         pMP->UpdateNormalAndDepth();
     }
@@ -412,9 +414,9 @@ void Map::PreSave(std::set<GeometricCamera *> &spCams)
         map<KeyFrame *, std::tuple<int, int>> mpObs = pMPi->GetObservations();
         for (map<KeyFrame *, std::tuple<int, int>>::iterator it = mpObs.begin(), end = mpObs.end(); it != end; ++it)
         {
-            if (it->first->GetMap() != this || it->first->isBad())
+            if (!it->first || it->first->GetMap() != this || it->first->isBad())
             {
-                pMPi->EraseObservation(it->first);
+                pMPi->EraseObservation(it->first, false);
             }
         }
     }
