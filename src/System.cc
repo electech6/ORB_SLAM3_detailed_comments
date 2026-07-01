@@ -139,7 +139,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         if(!bVocLoad)
         {
             cerr << "Wrong path to vocabulary. " << endl;
-            cerr << "Falied to open at: " << strVocFile << endl;
+            cerr << "Failed to open at: " << strVocFile << endl;
             exit(-1);
         }
         cout << "Vocabulary loaded!" << endl << endl;
@@ -163,7 +163,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         if(!bVocLoad)
         {
             cerr << "Wrong path to vocabulary. " << endl;
-            cerr << "Falied to open at: " << strVocFile << endl;
+            cerr << "Failed to open at: " << strVocFile << endl;
             exit(-1);
         }
         cout << "Vocabulary loaded!" << endl << endl;
